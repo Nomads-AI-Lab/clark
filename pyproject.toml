@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "jkg"
+version = "3.0.0"
+description = "JKG 3.0 — гибридная граф+embeddings память для AI-агентов. Одна база, ноль конфликтов."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Altynai & Jessica"}]
+keywords = ["ai", "memory", "knowledge-graph", "embeddings", "rag", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "sqlite-vec>=0.1.9",
+    "sentence-transformers>=5.0",
+    "requests>=2.28",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+jkg = "jkg.memory:main_cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jkg*"]
