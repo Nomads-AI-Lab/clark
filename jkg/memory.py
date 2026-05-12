@@ -63,7 +63,9 @@ class HybridMemory:
     """JKG 3.0: graph + embeddings in ONE SQLite database. Zero conflicts."""
 
     def __init__(self, db_path=DB_PATH, embedding_model=EMBEDDING_MODEL):
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        # Handle special SQLite paths like ":memory:"
+        if db_path not in (":memory:", "") and os.path.dirname(db_path):
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row

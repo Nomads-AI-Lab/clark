@@ -1,5 +1,5 @@
-"""JKG 3.0 — HYBRID Memory: Graph + Embeddings. One DB, zero conflicts."""
-from .memory import HybridMemory, main_cli
+"""JKG 5.1 — HYBRID Memory: Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving."""
+from .memory import HybridMemory
 
-__version__ = "3.0.0"
-__all__ = ["HybridMemory", "main_cli"]
+__version__ = "5.1.0"
+__all__ = ["HybridMemory"]
