@@ -177,8 +177,8 @@ Cognee:    ~65%       (estimated)
 pip install jessica-knowledge-graph
 
 # From source
-git clone https://github.com/altyshalu/jessica-knowledge-graph.git
-cd jessica-knowledge-graph
+git clone https://github.com/altyshalu/jkg3.0.git
+cd jkg3.0
 pip install -e .
 
 # Requirements
