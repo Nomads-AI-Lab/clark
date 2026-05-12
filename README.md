@@ -1,31 +1,32 @@
 # 🧠 Jessica Knowledge Graph (JKG)
 
-> **The world's most architecturally advanced AI memory system.**
-> Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving.
-> All in ONE SQLite transaction. Zero conflicts.
+> **Hybrid AI Memory — Graph + Embeddings in one SQLite transaction.**
+> Temporal reasoning, emotional context, intentional forgetting, and self-evolving schema.
+> All local. Zero cloud dependencies.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![ICLR 2025](https://img.shields.io/badge/Benchmark-LongMemEval-green.svg)](https://arxiv.org/abs/2410.10813)
+[![LongMemEval](https://img.shields.io/badge/LongMemEval--S-96.8%25%20R@5-green.svg)](https://arxiv.org/abs/2410.10813)
 
 ---
 
 ## Why JKG?
 
-Every AI memory system on the market has the same architectural flaw: **they separate graph from embeddings into different databases**, causing state drift, orphan entities, and silent corruption.
+Most AI memory systems keep their knowledge graph and vector embeddings in **separate databases**. This causes state drift — the graph says one thing, embeddings say another.
 
-JKG is the **first and only** system that runs graph + embeddings + temporal validity + emotional context + intentional forgetting + self-evolving schema — all in **one SQLite transaction**.
+JKG runs **everything in one SQLite transaction**: graph, embeddings, temporal validity, emotional context, forgetting, and schema evolution — no drift, no orphans.
 
-| Feature | Mem0 | Cognee | Zep/Graphiti | Letta | **JKG 5.1** |
-|---------|:----:|:------:|:------------:|:-----:|:-----------:|
-| Graph + Embeddings in ONE DB | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Bi-temporal (T+T') | ❌ | ❌ | ✅ | ❌ | ✅ |
-| Emotional memory | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Intentional forgetting | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Self-evolving schema | ❌ | ❌ | ❌ | ❌ | ✅ |
-| GDPR true deletion | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Local-only (no cloud) | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Architecture conflicts** | 0 | 0 | 2+ | 1+ | **0** |
+| Feature | Mem0 | Cognee | Zep | Letta | **JKG** |
+|---------|:----:|:------:|:---:|:-----:|:-------:|
+| Graph + Embeddings, one DB | — | — | — | — | ✅ |
+| Bi-temporal validity (T+T') | — | — | ✅ | — | ✅ |
+| Emotional context | — | — | — | — | ✅ |
+| Intentional forgetting | — | — | — | — | ✅ |
+| Self-evolving schema | — | — | — | — | ✅ |
+| GDPR true deletion + audit | — | — | — | — | ✅ |
+| Fully local (no cloud APIs*) | — | — | — | — | ✅ |
+
+*\*LLM extraction step is pluggable (DeepSeek by default, works with any OpenAI-compatible API)*
 
 ---
 
@@ -33,35 +34,35 @@ JKG is the **first and only** system that runs graph + embeddings + temporal val
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                  JKG 5.1                         │
-│                                                  │
-│  ┌─────────┐   ┌──────────┐   ┌──────────────┐  │
-│  │  GRAPH   │◄──┤ BRIDGE   ├──►│  EMBEDDINGS  │  │
-│  │ (SQLite) │   │bidirect. │   │ (sqlite-vec) │  │
-│  └────┬─────┘   └──────────┘   └──────┬───────┘  │
-│       │                               │          │
-│       ▼                               ▼          │
-│  ┌─────────────────────────────────────────────┐ │
-│  │           RRF FUSION (k=60)                  │ │
-│  │     BM25 + Vector KNN + Graph BFS            │ │
-│  └────────────────────┬────────────────────────┘ │
-│                       │                          │
-│       ┌───────────────┼───────────────┐          │
-│       ▼               ▼               ▼          │
-│  ┌─────────┐   ┌──────────┐   ┌──────────────┐  │
-│  │TEMPORAL │   │EMOTIONAL │   │  FORGETTING  │  │
-│  │ T + T'  │   │valence + │   │ Utility Score│  │
-│  │validity │   │intensity │   │   + prune    │  │
-│  └─────────┘   └──────────┘   └──────────────┘  │
-│                       │                          │
-│                       ▼                          │
-│              ┌────────────────┐                  │
-│              │ SELF-EVOLVING  │                  │
-│              │ schema proposals│                 │
-│              └────────────────┘                  │
-│                                                  │
-│         ALL IN ONE TRANSACTION                   │
-│         ZERO STATE DRIFT                         │
+│                    JKG 5.1                        │
+│                                                   │
+│  ┌─────────┐    ┌──────────┐    ┌──────────────┐ │
+│  │  GRAPH   │◄───┤ BRIDGE   ├───►│  EMBEDDINGS  │ │
+│  │ (SQLite) │    │bidirect. │    │ (sqlite-vec) │ │
+│  └────┬─────┘    └──────────┘    └──────┬───────┘ │
+│       │                                 │         │
+│       ▼                                 ▼         │
+│  ┌──────────────────────────────────────────────┐ │
+│  │           RRF FUSION (k=60)                   │ │
+│  │      BM25 + Vector KNN + Graph BFS            │ │
+│  └────────────────────┬─────────────────────────┘ │
+│                       │                           │
+│       ┌───────────────┼───────────────┐           │
+│       ▼               ▼               ▼           │
+│  ┌─────────┐   ┌──────────┐   ┌──────────────┐   │
+│  │TEMPORAL │   │EMOTIONAL │   │  FORGETTING  │   │
+│  │ T + T'  │   │valence + │   │ Utility Score│   │
+│  │validity │   │intensity │   │   + prune    │   │
+│  └─────────┘   └──────────┘   └──────────────┘   │
+│                       │                           │
+│                       ▼                           │
+│              ┌────────────────┐                   │
+│              │ SELF-EVOLVING  │                   │
+│              │schema proposals│                   │
+│              └────────────────┘                   │
+│                                                   │
+│         ONE SQLite. ONE transaction.              │
+│         Zero state drift.                         │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -74,7 +75,7 @@ pip install jessica-knowledge-graph
 ```python
 from jkg import HybridMemory
 
-# Create memory (one file, one database)
+# One file, one database
 memory = HybridMemory("my_memory.db")
 
 # Remember anything — facts, emotions, events
@@ -102,7 +103,7 @@ print(answer["answer"])
 ## Features
 
 ### 🕐 Temporal Reasoning (Bi-temporal T+T')
-Every fact knows WHEN it was true and WHEN the system learned it. Automatic invalidation when facts change.
+Every fact stores both *when it was true* and *when the system learned it*. Automatic invalidation when facts change.
 
 ```python
 memory.remember("Alice worked at Google from 2020 to 2023.")
@@ -110,22 +111,22 @@ memory.remember("Alice worked at Google from 2020 to 2023.")
 
 memory.remember("Alice builds CopilotOS since May 2025.")
 # → builds=CopilotOS: valid_from=2025-05-01, valid_until=null
-# → works_at=Meta: automatically invalidated (valid_until=2025-05-01)
+# → works_at=Meta: auto-invalidated (valid_until=2025-05-01)
 ```
 
 ### 💭 Emotional Memory
-Episodes carry emotional context — valence + intensity. The system remembers not just WHAT happened, but how you FELT.
+Episodes carry emotional context — valence + intensity. Remembers not just what happened, but how you felt.
 
 ```python
 memory.remember("I'm devastated... the project failed at the hackathon!")
-# → emotion: negative, intensity: 0.9
+# → emotion: sadness, intensity: 0.9
 
 ctx = memory.get_emotional_context()
-# → [{"emotion": "sadness", "intensity": 0.9, "episode": "Hackathon fail"}, ...]
+# → [{"emotion": "sadness", "intensity": 0.9, ...}, ...]
 ```
 
 ### 🗑️ Intentional Forgetting
-Not infinite storage. Facts decay naturally based on utility score (access frequency × recency × confidence × PageRank − age penalty).
+Facts decay based on **utility score** (access frequency × recency × confidence × PageRank − age penalty). Old, unused facts are automatically pruned.
 
 ```python
 memory.update_utility_scores()
@@ -134,41 +135,55 @@ print(f"Candidates for forgetting: {result['candidates']}")
 ```
 
 ### 🧬 Self-Evolving Schema
-The LLM periodically analyzes stored knowledge, discovers patterns, and proposes new entity types and relation types.
+The LLM periodically discovers patterns in stored knowledge and proposes new entity/relation types.
 
 ```python
 proposals = memory.evolve_schema(dry_run=True)
-# → "Discovered pattern: 'startup' entities often have 'funding_round' relations"
-# → Proposed: new relation type 'funding_round'
+# → "Discovered: 'startup' entities often have 'funding_round' relations"
 ```
 
 ### 🔐 GDPR-First Deletion
-True deletion with full audit trail. Not soft-delete — actual removal with cryptographic proof.
+True deletion with full audit trail. Not soft-delete — actual removal from the database.
 
 ```python
 result = memory.gdpr_delete("John Doe", request_id="GDPR-2025-001", verified=True)
-# → status: "deleted"
-# → Audit trail preserved in forget_log + deletion_log
+# → status: "deleted", audit trail preserved
 ```
 
-## Benchmark Results
+### 🔗 Temporal Linking (v5.1)
+Extracted facts are automatically linked: `end_year=2023` → sets `valid_until` on `works_at`. `builds=Y` → invalidates old `works_at` facts. Career timelines stay consistent.
 
-### Our Benchmark (16 tests, all features)
+### 📝 Predicate Aliases (v5.1)
+"Where does Alice work?" matches `works_at`, `builds`, `founded`, `develops`, `строит`, `основала`, etc. No missed answers because the predicate name varies.
+
+---
+
+## Benchmarks
+
+### Custom Benchmark (16 tests, all 7 features)
 ```
 JKG 3.0:  42.5%
 JKG 5.0:  87.5%
-JKG 5.1:  93.8%  ← current
+JKG 5.1:  93.8%
 ```
 
-### LongMemEval-S (500 questions, retrieval-only)
+### LongMemEval-S (470 questions, retrieval-only R@5)
 ```
-JKG 5.1:   97.9% R@5  (preliminary, 100/500)
-Zep:       71.2%      (full QA, different metric)
-Mem0:      ~75%       (estimated)
-Cognee:    ~65%       (estimated)
+knowledge-update           100.0%
+single-session-user         98.4%
+single-session-assistant    98.2%
+multi-session               97.5%
+single-session-preference   96.7%
+temporal-reasoning          92.9%
+─────────────────────────────────
+OVERALL R@5:               96.8%
+OVERALL R@10:              97.7%
+MRR:                       89.0%
 ```
 
-*Full LongMemEval-S run in progress. Preliminary results at 100/500 questions.*
+*Compared to published retrieval-only results on the same benchmark: agentmemory hybrid 95.2%, MemPalace 96.6%.*
+
+---
 
 ## Installation
 
@@ -177,8 +192,8 @@ Cognee:    ~65%       (estimated)
 pip install jessica-knowledge-graph
 
 # From source
-git clone https://github.com/altyshalu/jkg3.0.git
-cd jkg3.0
+git clone https://github.com/altyshalu/jessica-knowledge-graph.git
+cd jessica-knowledge-graph
 pip install -e .
 
 # Requirements
@@ -188,8 +203,10 @@ pip install sentence-transformers sqlite-vec numpy requests
 Set your LLM API key for extraction:
 ```bash
 export DEEPSEEK_API_KEY="your-key-here"
-# Or create a .env file in the project root
+# Or any OpenAI-compatible endpoint via OPENAI_API_KEY + OPENAI_BASE_URL
 ```
+
+---
 
 ## How It Works
 
@@ -198,38 +215,33 @@ export DEEPSEEK_API_KEY="your-key-here"
 2. **Vector KNN** semantic search (sqlite-vec + MiniLM-L6-v2)
 3. **Graph BFS** traversal from matched entities
 4. **RRF Fusion** (Reciprocal Rank Fusion, k=60)
-5. **LLM Rerank** (DeepSeek, optional)
+5. **LLM Rerank** (DeepSeek or any OpenAI-compatible model)
 
 ### Bidirectional Bridge
 - **Graph → Embeddings**: PageRank boosts embedding confidence
 - **Embeddings → Graph**: Semantic similarity suggests new relations
 
-### Temporal Linking (v5.1)
-- `end_year=2023` → sets `valid_until` on corresponding `works_at` facts
-- `resigned_from=X` → invalidates `works_at=X`
-- `builds=Y` → invalidates all previous `works_at` facts
-
-### Predicate Aliases (v5.1)
-- "Where does X work?" → matches `works_at`, `builds`, `founded`, `develops`, `строит`, `основала`, etc.
-- No more missing answers because the predicate name varies
+---
 
 ## Roadmap
 
 - [x] JKG 1.0 — Keyword search (SQLite)
 - [x] JKG 2.0 — Graph with BFS + PageRank
-- [x] JKG 3.0 — Hybrid: Graph + Embeddings in ONE DB
+- [x] JKG 3.0 — Hybrid: Graph + Embeddings in one DB
 - [x] JKG 4.0 — Temporal validity + Entity resolution + Episodes
 - [x] JKG 5.0 — Bi-temporal + Emotional + Forgetting + Self-evolving + GDPR
-- [x] JKG 5.1 — Temporal linking + Predicate aliases (93.8%)
+- [x] JKG 5.1 — Temporal linking + Predicate aliases
 - [ ] JKG 6.0 — Causal reasoning + Multi-modal (images, audio)
-- [ ] JKG 7.0 — Distributed (multiple agents sharing one KG)
+- [ ] JKG 7.0 — Distributed (multi-agent shared knowledge graph)
+
+---
 
 ## Citation
 
 ```bibtex
 @software{jkg2025,
   author = {Altynai},
-  title = {Jessica Knowledge Graph: Hybrid AI Memory with Zero Architecture Conflicts},
+  title = {Jessica Knowledge Graph: Hybrid AI Memory},
   year = {2025},
   url = {https://github.com/altyshalu/jessica-knowledge-graph}
 }
@@ -241,4 +253,4 @@ MIT — free for personal and commercial use.
 
 ---
 
-*Built with ❤️ by Altynai. The future of AI memory is hybrid, temporal, emotional, and self-evolving — all in one transaction.*
+*Built with ❤️ by Altynai*
