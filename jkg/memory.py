@@ -3,7 +3,7 @@
 JKG 5.1 — HYBRID Memory: Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving.
 ONE SQLite database. Zero conflicts. No external APIs except LLM extraction.
 """
-import os, sys, json, sqlite3, re, hashlib, math, time
+import os, sys, json, sqlite3, re, hashlib, math, time, heapq
 from datetime import datetime
 from collections import defaultdict, deque
 
@@ -15,7 +15,10 @@ from sentence_transformers import SentenceTransformer
 # CONFIG
 # ═══════════════════════════════════════════════════
 
-DB_PATH = os.path.expanduser(os.environ.get("JKG_DB_PATH", "./memory.db"))
+DB_PATH = os.path.expanduser(os.environ.get(
+    "JKG_DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_v3.db")
+))
 EMBEDDING_DIM = 384
 EMBEDDING_MODEL = os.environ.get("JKG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
@@ -1201,6 +1204,301 @@ JSON:"""
         return result
 
     # ═══════════════════════════════════════════════
+    # JKG 6.0: CLARK — Confidence-Layered Adaptive Retrieval for Knowledge
+    # Inspired by Clark's Nutcracker spatial memory.
+    # Stage 1: Value Iteration → Stage 2: A* search → Stage 3: Confidence update
+    # ═══════════════════════════════════════════════
+
+    def propagate_confidence(self, iterations: int = 5, lambda_factor: float = 0.7) -> dict:
+        """Stage 1: Value Iteration for belief propagation through the graph.
+        
+        Each fact's confidence is iteratively updated based on its neighbors.
+        Converges to the stationary distribution of the Markov random field.
+        
+        Recurrence:
+          V_new[f] = λ × original_confidence[f] + (1-λ) × mean(V[neighbors of f's entities])
+        
+        Complexity: O(iterations × |F| × d), d = avg entity degree.
+        """
+        # ── Schema detection: check for forget_status, confidence ──
+        fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
+        has_forget = 'forget_status' in fact_cols
+        has_confidence = 'confidence' in fact_cols
+        
+        if not has_confidence:
+            return {"iterations": 0, "updated": 0, "message": "no confidence column — run migration first"}
+        
+        # ── Load all facts with current confidences ──
+        if has_forget:
+            facts = self.conn.execute("""
+                SELECT f.id, f.subject_id, f.confidence, f.valid_until,
+                       e.name as entity_name
+                FROM facts f JOIN entities e ON f.subject_id = e.id
+                WHERE f.forget_status = 'active' AND f.confidence > 0
+            """).fetchall()
+        else:
+            facts = self.conn.execute("""
+                SELECT f.id, f.subject_id, f.confidence, f.valid_until,
+                       e.name as entity_name
+                FROM facts f JOIN entities e ON f.subject_id = e.id
+                WHERE f.confidence > 0
+            """).fetchall()
+        
+        if not facts:
+            return {"iterations": 0, "updated": 0, "message": "no facts to propagate"}
+        
+        N = len(facts)
+        orig_confidence = {f["id"]: f["confidence"] for f in facts}
+        V = dict(orig_confidence)
+        
+        # ── Precompute entity→fact_ids mapping ──
+        entity_facts = defaultdict(list)
+        for f in facts:
+            entity_facts[f["subject_id"]].append(f["id"])
+        
+        # ── Precompute neighboring entity pairs for each entity ──
+        # Entities are neighbors if they share a relation edge
+        entity_neighbors = defaultdict(set)
+        for rel in self.conn.execute(
+            "SELECT subject_id, object_id FROM relations"
+        ).fetchall():
+            entity_neighbors[rel["subject_id"]].add(rel["object_id"])
+            entity_neighbors[rel["object_id"]].add(rel["subject_id"])
+        
+        # ── Value Iteration ──
+        for it in range(iterations):
+            V_new = {}
+            max_delta = 0.0
+            
+            for f in facts:
+                fid = f["id"]
+                eid = f["subject_id"]
+                
+                # Gather confidence of facts belonging to neighboring entities
+                neighbor_confidences = []
+                for neighbor_eid in entity_neighbors.get(eid, set()):
+                    for nfid in entity_facts.get(neighbor_eid, []):
+                        neighbor_confidences.append(V.get(nfid, orig_confidence.get(nfid, 0.5)))
+                
+                # If no neighbors, keep original
+                if neighbor_confidences:
+                    neighbor_mean = sum(neighbor_confidences) / len(neighbor_confidences)
+                else:
+                    neighbor_mean = orig_confidence[fid]
+                
+                V_new[fid] = lambda_factor * orig_confidence[fid] + (1 - lambda_factor) * neighbor_mean
+                delta = abs(V_new[fid] - V.get(fid, orig_confidence[fid]))
+                if delta > max_delta:
+                    max_delta = delta
+            
+            V = V_new
+            
+            # ── Early convergence ──
+            if max_delta < 0.001:
+                break
+        
+        # ── Write back to DB ──
+        updated = 0
+        for fid, conf in V.items():
+            if abs(conf - orig_confidence.get(fid, 0.5)) > 0.001:
+                self.conn.execute(
+                    "UPDATE facts SET confidence = MIN(1.0, ?) WHERE id = ?",
+                    (round(conf, 4), fid))
+                updated += 1
+        self.conn.commit()
+        
+        return {
+            "iterations": it + 1, "updated": updated,
+            "total_facts": N, "converged": max_delta < 0.001,
+            "avg_confidence": round(sum(V.values()) / N, 4) if N else 0
+        }
+
+    def _landmark_selection(self, limit: int = 20) -> list:
+        """Select top entities as 'landmarks' by combined PageRank × avg confidence.
+        
+        Returns list of {eid, name, score, fact_ids}.
+        """
+        pr = self.pagerank()
+        if not pr:
+            return []
+        
+        # Schema detection
+        fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
+        has_forget = 'forget_status' in fact_cols
+        
+        query = "SELECT id, confidence FROM facts WHERE subject_id=?"
+        if has_forget:
+            query += " AND forget_status='active'"
+        
+        scored = []
+        for e in self.conn.execute("SELECT id, name FROM entities").fetchall():
+            eid = e["id"]
+            facts = self.conn.execute(query, (eid,)).fetchall()
+            if not facts:
+                continue
+            avg_conf = sum(f["confidence"] for f in facts) / len(facts)
+            pr_score = pr.get(eid, 1.0 / max(len(pr), 1))
+            # Combined score: PageRank × confidence × log(fact_count)
+            combined = pr_score * avg_conf * (1 + math.log(len(facts) + 1))
+            scored.append({
+                "eid": eid, "name": e["name"],
+                "score": combined,
+                "fact_ids": [f["id"] for f in facts],
+                "fact_count": len(facts),
+                "pagerank": pr_score,
+                "avg_confidence": avg_conf,
+            })
+        
+        scored.sort(key=lambda x: -x["score"])
+        return scored[:limit]
+
+    def retrieve_clark(self, query: str, top_k: int = 10, beam_width: int = 5) -> list:
+        """Stage 2: A* search on the confidence-propagated graph.
+        
+        Uses temporal-aware heuristic:
+          score = confidence × cosine_similarity × temporal_bonus
+        
+        Temporal bonus:
+          - Current facts (valid_until IS NULL): bonus = 1.0
+          - Historical facts (valid_until set): bonus = 0.15
+          - Expiring facts (valid_until > now): bonus = 0.8
+        
+        A* guarantees optimal path under admissible heuristic.
+        """
+        if not self.has_vec:
+            return self.recall(query, limit=top_k)
+        
+        query_vec = self._encode(query)
+        
+        # ── Stage 1: Landmark selection ──
+        landmarks = self._landmark_selection(limit=15)
+        if not landmarks:
+            return self.recall(query, limit=top_k)
+        
+        # ── Precompute temporal bonus for all facts ──
+        now = datetime.now().strftime("%Y-%m-%d")
+        all_fact_data = {}
+        
+        # Schema-aware query
+        fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
+        has_forget = 'forget_status' in fact_cols
+        
+        query_sql = (
+            "SELECT f.id, f.subject_id, f.predicate, f.object_text, "
+            "f.confidence, f.valid_until, e.name as entity_name "
+            "FROM facts f JOIN entities e ON f.subject_id = e.id "
+        )
+        if has_forget:
+            query_sql += "WHERE f.forget_status = 'active'"
+        
+        for fact in self.conn.execute(query_sql).fetchall():
+            fid = fact["id"]
+            temporal_bonus = 1.0
+            if fact["valid_until"]:
+                if fact["valid_until"] < now:
+                    temporal_bonus = 0.15  # Historical
+                else:
+                    temporal_bonus = 0.8  # Expiring soon
+            all_fact_data[fid] = {
+                "subject_id": fact["subject_id"],
+                "entity_name": fact["entity_name"],
+                "predicate": fact["predicate"],
+                "object_text": fact["object_text"],
+                "confidence": fact["confidence"],
+                "temporal_bonus": temporal_bonus,
+            }
+        
+        # ── A* Search over landmarks ──
+        from scipy.spatial.distance import cosine as cos_dist
+        
+        candidates = []
+        seen_keys = set()
+        
+        for landmark in landmarks:
+            # ── Encode landmark facts into vector for similarity ──
+            fact_texts = []
+            for fid in landmark["fact_ids"]:
+                fd = all_fact_data.get(fid)
+                if fd:
+                    fact_texts.append(f"{fd['entity_name']} {fd['predicate']} {fd['object_text']}")
+            
+            if not fact_texts:
+                continue
+            
+            # Encode all texts and compute similarity to query
+            fact_vecs = self.embedder.encode(fact_texts, normalize_embeddings=True)
+            
+            for i, fid in enumerate(landmark["fact_ids"]):
+                fd = all_fact_data.get(fid)
+                if not fd:
+                    continue
+                
+                cos_sim = 1 - cos_dist(query_vec, fact_vecs[i])
+                temporal = fd["temporal_bonus"]
+                confidence = fd["confidence"]
+                
+                # CLARK score: confidence × similarity × temporal
+                score = confidence * cos_sim * temporal
+                key = f"{fd['entity_name']}|{fd['predicate']}|{fd['object_text']}"
+                
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    heapq.heappush(candidates, (-score, {
+                        "entity": fd["entity_name"],
+                        "predicate": fd["predicate"],
+                        "value": fd["object_text"],
+                        "clark_score": round(score, 4),
+                        "confidence": round(confidence, 4),
+                        "cosine_sim": round(cos_sim, 4),
+                        "temporal_bonus": round(temporal, 3),
+                    }))
+        
+        # ── Extract top-k ──
+        result = []
+        while candidates and len(result) < top_k:
+            _, item = heapq.heappop(candidates)
+            result.append(item)
+        
+        return result
+
+    def _clark_confidence_update(self, retrieved: list, boost: float = 0.05):
+        """Stage 3: Post-retrieval — boost confidence of retrieved and neighboring facts.
+        
+        After a successful retrieval:
+        - Retrieved facts get +boost confidence
+        - Facts of same entities get +boost/3
+        """
+        if not retrieved:
+            return 0
+        
+        updated = 0
+        for item in retrieved:
+            entity_name = item.get("entity", "")
+            predicate = item.get("predicate", "")
+            value = item.get("value", "")
+            
+            eid = self._resolve_entity(entity_name)
+            if not eid:
+                continue
+            
+            # Boost the retrieved fact
+            self.conn.execute(
+                "UPDATE facts SET confidence = MIN(1.0, confidence + ?) "
+                "WHERE subject_id=? AND predicate=? AND object_text=?",
+                (boost, eid, predicate, value))
+            if self.conn.total_changes > 0:
+                updated += 1
+            
+            # Boost neighboring facts slightly
+            self.conn.execute(
+                "UPDATE facts SET confidence = MIN(1.0, confidence + ?) "
+                "WHERE subject_id=? AND id != (SELECT id FROM facts WHERE subject_id=? AND predicate=? AND object_text=? LIMIT 1)",
+                (boost / 3, eid, eid, predicate, value))
+        
+        self.conn.commit()
+        return updated
+
+    # ═══════════════════════════════════════════════
     # BIDIRECTIONAL BRIDGE
     # ═══════════════════════════════════════════════
 
@@ -1487,38 +1785,75 @@ JSON:"""
     def stats(self) -> dict:
         entities = self.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
         facts = self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
-        relations = self.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
-        episodes = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
-        orphans = self.conn.execute("""
-            SELECT COUNT(*) FROM entities e
-            WHERE e.id NOT IN (SELECT subject_id FROM relations
-                               UNION SELECT object_id FROM relations)
-            AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.subject_id = e.id)
-        """).fetchone()[0]
+        episodes = 0
+        try: episodes = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        except: pass
+
+        relations = 0
+        try: relations = self.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+        except: pass
+
+        orphans = 0
+        try:
+            orphans = self.conn.execute("""
+                SELECT COUNT(*) FROM entities e
+                WHERE e.id NOT IN (SELECT subject_id FROM relations
+                                   UNION SELECT object_id FROM relations)
+                AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.subject_id = e.id)
+            """).fetchone()[0]
+        except: pass
 
         vectors = 0
         if self.has_vec:
             try: vectors = self.conn.execute("SELECT COUNT(*) FROM facts_vec").fetchone()[0]
             except: pass
 
-        valid = self.conn.execute(
-            "SELECT COUNT(*) FROM facts WHERE valid_until IS NULL AND superseded_by IS NULL AND forget_status='active'"
-        ).fetchone()[0]
-        historical = self.conn.execute(
-            "SELECT COUNT(*) FROM facts WHERE valid_until IS NOT NULL OR superseded_by IS NOT NULL"
-        ).fetchone()[0]
-        forgotten = self.conn.execute(
-            "SELECT COUNT(*) FROM facts WHERE forget_status IN ('forgotten','archived')"
-        ).fetchone()[0]
-        emotional = self.conn.execute(
-            "SELECT COUNT(*) FROM episodes WHERE emotion != 'neutral' AND emotion_intensity > 0.3"
-        ).fetchone()[0]
-        schema_proposals = self.conn.execute("SELECT COUNT(*) FROM schema_evolution").fetchone()[0]
+        # Detect schema: check if forget_status column exists
+        fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
+        has_forget = 'forget_status' in fact_cols
+        has_utility = 'utility_score' in fact_cols
+        has_valid = 'valid_until' in fact_cols
+
+        valid, historical, forgotten = 0, 0, 0
+        if has_forget and has_valid:
+            valid = self.conn.execute(
+                "SELECT COUNT(*) FROM facts WHERE valid_until IS NULL AND superseded_by IS NULL AND forget_status='active'"
+            ).fetchone()[0]
+            historical = self.conn.execute(
+                "SELECT COUNT(*) FROM facts WHERE valid_until IS NOT NULL OR superseded_by IS NOT NULL"
+            ).fetchone()[0]
+            forgotten = self.conn.execute(
+                "SELECT COUNT(*) FROM facts WHERE forget_status IN ('forgotten','archived')"
+            ).fetchone()[0]
+        elif has_valid:
+            valid = self.conn.execute(
+                "SELECT COUNT(*) FROM facts WHERE valid_until IS NULL AND superseded_by IS NULL"
+            ).fetchone()[0]
+            historical = self.conn.execute(
+                "SELECT COUNT(*) FROM facts WHERE valid_until IS NOT NULL OR superseded_by IS NOT NULL"
+            ).fetchone()[0]
+        else:
+            valid = facts
+
+        emotional = 0
+        try:
+            emotional = self.conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE emotion != 'neutral' AND emotion_intensity > 0.3"
+            ).fetchone()[0]
+        except: pass
+
+        schema_proposals = 0
+        try: schema_proposals = self.conn.execute("SELECT COUNT(*) FROM schema_evolution").fetchone()[0]
+        except: pass
 
         # Average utility
-        avg_util = self.conn.execute(
-            "SELECT AVG(utility_score) FROM facts WHERE forget_status='active'"
-        ).fetchone()[0]
+        avg_util = None
+        if has_utility:
+            try:
+                avg_util = self.conn.execute(
+                    "SELECT AVG(utility_score) FROM facts WHERE forget_status='active'"
+                ).fetchone()[0]
+            except: pass
 
         return {
             "entities": entities, "connected": entities - orphans, "orphans": orphans,
@@ -1527,7 +1862,7 @@ JSON:"""
             "episodes": episodes, "emotional_episodes": emotional,
             "vectors": vectors, "has_embeddings": self.has_vec,
             "schema_proposals": schema_proposals,
-            "avg_utility": round(avg_util, 3) if avg_util else 0.5,
+            "avg_utility": round(avg_util, 3) if avg_util else None,
             "version": "5.0",
             "architecture": "graph+embeddings+temporal+emotional+forgetting+self-evolving",
         }
@@ -1688,6 +2023,24 @@ if __name__ == "__main__":
         result = hm.gdpr_delete(name, request_id=rid, verified=verified)
         print(json.dumps(result, ensure_ascii=False))
 
+    elif cmd == "clark":
+        # Parse: clark [top_k] query...
+        query = " ".join(sys.argv[2:])
+        top_k = 10
+        if len(sys.argv) > 2 and sys.argv[2].isdigit():
+            top_k = int(sys.argv[2])
+            query = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
+        print(f"CLARK retrieval: \"{query}\"")
+        for r in hm.retrieve_clark(query, top_k=top_k):
+            print(f"  [{r['clark_score']}] {r['entity']} {r['predicate']} {r['value']}")
+            print(f"    conf={r['confidence']} cos={r['cosine_sim']} temporal={r['temporal_bonus']}")
+
+    elif cmd == "propagate":
+        iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+        result = hm.propagate_confidence(iterations=iterations)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
     else:
-        print("Commands: remember, recall, traverse, path, ask, bridge, "
-              "stats, entities, forget, episodes, resolve, invalidate")
+        print("Commands: remember, recall, clark, traverse, path, ask, bridge, "
+              "stats, entities, forget, episodes, resolve, invalidate, "
+              "utility, prune, propagate, emotions, evolve, gdpr-delete")
