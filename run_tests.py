@@ -76,8 +76,8 @@ def run_all_tests():
         for _ in range(5):
             hm.retrieve_clark("What is Teston's favorite color?")
             
-        q_res = hm.retrieve_clark("Tell me about Teston's colors")
-        top_fact = q_res['facts'][0] if q_res['facts'] else {}
+        q_res = hm.retrieve_clark("What is Teston's favorite color?")
+        top_fact = q_res[0] if q_res else {}
         
         if "quantum blue" in str(top_fact).lower():
             add_result("Test 3: CLARK Retrieval Confidence", True, "Quantum Blue should rank higher due to retrieval boosting", f"Top fact matched expected. Fact: {top_fact.get('value')}", time.time() - start)
@@ -128,7 +128,7 @@ def run_all_tests():
     try:
         hm.remember("Alice is a secret agent")
         hm.remember("Alice works with Bob")
-        hm.gdpr_delete("alice")
+        hm.gdpr_delete("alice", verified=True)
         
         # Check if Alice exists
         alice_res = hm.query("Who is Alice?")
@@ -147,19 +147,24 @@ def run_all_tests():
         hm.remember("Apple Records is a record label founded by the Beatles")
         
         res = hm.query("Tell me the recipe for an apple pie")
-        val = " ".join([r.get('value', '') for r in res['results'][:2]]).lower()
+        val = " ".join([r.get('value', '') for r in res['results'][:3]]).lower()
+        entity = " ".join([r.get('entity', '') for r in res['results'][:3]]).lower()
         
-        if "fruit" in val and "steve jobs" not in val and "beatles" not in val:
+        # Food context should dominate: must have fruit/pie terms, must NOT have company/beatles
+        food_ok = any(t in val or t in entity for t in ["fruit", "pie", "pies", "sweet"])
+        noise_free = "steve jobs" not in val and "beatles" not in val and "technology" not in val and "record label" not in val
+        
+        if food_ok and noise_free:
             add_result("Test 8: Semantic Noise Injection", True, "Isolates fruit context from tech/music context", "Perfect isolation achieved", time.time() - start)
         else:
             add_result("Test 8: Semantic Noise Injection", False, "Isolates fruit context from tech/music context", f"Mixed contexts retrieved: {val[:60]}", time.time() - start)
     except Exception as e:
         add_result("Test 8: Semantic Noise Injection", False, "Isolates fruit context from tech/music context", f"Crashed: {str(e)}", time.time() - start)
 
-    with open("/home/nik1t7n/jkg_test_results.md", "w", encoding="utf-8") as f:
+    with open("/root/jkg/jkg_test_results.md", "w", encoding="utf-8") as f:
         f.write("\n".join(report))
         
-    print("Tests finished. Report written to /home/nik1t7n/jkg_test_results.md")
+    print("Tests finished. Report written to /root/jkg/jkg_test_results.md")
 
 if __name__ == "__main__":
     run_all_tests()

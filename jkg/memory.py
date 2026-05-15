@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 
 import requests
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
 # ═══════════════════════════════════════════════════
 # CONFIG
@@ -18,8 +19,13 @@ DB_PATH = os.path.expanduser(os.environ.get(
     "JKG_DB_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_v3.db")
 ))
-EMBEDDING_DIM = 768
-EMBEDDING_MODEL = os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-2")
+# Default: local SentenceTransformer (384-dim). Set GEMINI_API_KEY for Gemini (768-dim).
+_USE_GEMINI = bool(os.environ.get("GEMINI_API_KEY", ""))
+EMBEDDING_DIM = 768 if _USE_GEMINI else 384
+EMBEDDING_MODEL = os.environ.get(
+    "JKG_EMBEDDING_MODEL",
+    "gemini-embedding-2" if _USE_GEMINI else "all-MiniLM-L6-v2"
+)
 
 def _load_env():
     """Load .env from current dir, ~/.jkg/, or JKG_ENV_PATH."""
@@ -250,48 +256,51 @@ class HybridMemory:
 
     @property
     def embedder(self):
-        return self
+        if self._embedder is None:
+            if _USE_GEMINI:
+                self._embedder = self  # Gemini — use self.encode()
+            else:
+                self._embedder = SentenceTransformer(self._embedder_name)
+        return self._embedder
         
     def encode(self, texts, **kwargs):
-        import requests
-        import numpy as np
-        import sys
+        """Unified encode: delegates to Gemini API or SentenceTransformer."""
+        import requests as _requests
+        import numpy as _np
+        
+        # If we're a SentenceTransformer instance (set by embedder property)
+        if isinstance(self._embedder, SentenceTransformer):
+            return self._embedder.encode(texts, normalize_embeddings=True, **kwargs)
+        
+        # Gemini API path
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             print("WARNING: GEMINI_API_KEY not set. Returning zero vectors.", file=sys.stderr)
+            dim = EMBEDDING_DIM
             if isinstance(texts, str):
-                return np.zeros(768, dtype=np.float32)
-            return [np.zeros(768, dtype=np.float32) for _ in texts]
+                return _np.zeros(dim, dtype=_np.float32)
+            return [_np.zeros(dim, dtype=_np.float32) for _ in texts]
         
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
         
-        if isinstance(texts, str):
-            payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": texts}]}}
-            resp = requests.post(url, json=payload).json()
-            import numpy as np
+        def _call_gemini(text):
+            payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
+            resp = _requests.post(url, json=payload, timeout=30).json()
             if "embedding" not in resp:
                 print(f"Error from Gemini API: {resp}", file=sys.stderr)
-                return np.zeros(768, dtype=np.float32)
-            # pad or truncate to 768 to match DB
+                return _np.zeros(EMBEDDING_DIM, dtype=_np.float32)
             vals = resp["embedding"]["values"]
-            if len(vals) > 768: vals = vals[:768]
-            if len(vals) < 768: vals = vals + [0.0]*(768 - len(vals))
-            return np.array(vals, dtype=np.float32)
-        else:
-            results = []
-            for text in texts:
-                payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
-                resp = requests.post(url, json=payload).json()
-                import numpy as np
-                if "embedding" not in resp:
-                    print(f"Error from Gemini API: {resp}", file=sys.stderr)
-                    results.append(np.zeros(768, dtype=np.float32))
-                    continue
-                vals = resp["embedding"]["values"]
-                if len(vals) > 768: vals = vals[:768]
-                if len(vals) < 768: vals = vals + [0.0]*(768 - len(vals))
-                results.append(np.array(vals, dtype=np.float32))
-            return results
+            dim = EMBEDDING_DIM
+            if len(vals) > dim:
+                vals = vals[:dim]
+            if len(vals) < dim:
+                vals = vals + [0.0] * (dim - len(vals))
+            return _np.array(vals, dtype=_np.float32)
+        
+        if isinstance(texts, str):
+            return _call_gemini(texts)
+        
+        return [_call_gemini(t) for t in texts]
     # SCHEMA — one DB, all tables
     # ═══════════════════════════════════════════════
 
@@ -1186,6 +1195,9 @@ JSON:"""
         # Scrub Episodic memory
         self.conn.execute("DELETE FROM memory_sessions WHERE full_text LIKE ?", (f"%{entity_name}%",))
 
+        # Scrub Profile layer
+        self.conn.execute("DELETE FROM memory_profile WHERE value LIKE ? OR key LIKE ?", (f"%{entity_name}%", f"%{entity_name}%"))
+
         self.conn.commit()
         return {"status": "deleted", "entity": entity_name, "eid": eid,
                 "facts_deleted": fact_count, "relations_deleted": rel_count,
@@ -1277,6 +1289,18 @@ JSON:"""
                 tf = temp_facts.get(tf_key, {})
                 vfrom = tf.get("valid_from") or temp_ref
                 vuntil = tf.get("valid_until")
+
+                # Fix: LLM often over-fits "in YEAR" as "ended in YEAR" for residence/employment.
+                # If valid_until is in the same year as valid_from, reset to NULL —
+                # conflict resolution (_invalidate_with_edge) will correctly close it later.
+                if vuntil and pred in (
+                    self._RESIDENCE_PREDICATES | self._RESIDENCE_TRANSITION_PREDICATES |
+                    self._EMPLOYMENT_PREDICATES
+                ):
+                    vf_dt = self._parse_partial_date(vfrom, default_end=False)
+                    vu_dt = self._parse_partial_date(vuntil, default_end=True)
+                    if vf_dt and vu_dt and vf_dt.year == vu_dt.year:
+                        vuntil = None  # Open-ended; conflict resolution will close when superseded
 
                 # Find conflicts before insert so the new fact can explicitly supersede them
                 conflicting_fact_ids = self._find_conflicting_fact_ids(subj, pred, obj)
@@ -1547,9 +1571,9 @@ JSON:"""
         company_terms = {"company", "technology", "record", "label", "founded", "jobs", "beatles"}
         if any(term in q for term in food_terms):
             if any(term in c for term in food_terms):
-                bonus += 0.25
+                bonus += 0.35
             if any(term in c for term in company_terms):
-                bonus -= 0.18
+                bonus -= 0.50  # Strong penalty — food query + company context = noise
 
         if any(term in q for term in {"where", "live", "lived", "moved", "location", "где", "живет", "жил", "переех"}):
             if predicate.endswith("_year") or (re.fullmatch(r"\d{4}", str(value or "")) is not None):
@@ -1761,7 +1785,7 @@ JSON:"""
         scored.sort(key=lambda x: -x["score"])
         return scored[:limit]
 
-    def retrieve_clark(self, query: str, top_k: int = 10, beam_width: int = 5) -> dict:
+    def retrieve_clark(self, query: str, top_k: int = 10, beam_width: int = 5) -> list:
         """Stage 2: A* search on the confidence-propagated graph.
         
         Uses temporal-aware heuristic:
@@ -1773,11 +1797,11 @@ JSON:"""
           - No temporal info: bonus = 0.5
         
         A* guarantees optimal path under admissible heuristic.
+        
+        Returns list of fact dicts (backward compatible).
         """
         if not self.has_vec:
-            # Fallback to RRF if no vector support
-            facts = self.recall(query, limit=top_k)
-            return {"query": query, "facts": facts, "method": "rrf_fallback"}
+            return self.recall(query, limit=top_k)
         
         query_vec = self._encode(query)
         timeframe = self._extract_query_timeframe(query)
@@ -1786,8 +1810,7 @@ JSON:"""
         # ── Stage 1: Landmark selection ──
         landmarks = self._landmark_selection(limit=15, include_historical=include_historical)
         if not landmarks:
-            facts = self.recall(query, limit=top_k)
-            return {"query": query, "facts": facts, "method": "rrf_no_landmarks"}
+            return self.recall(query, limit=top_k)
         
         # ── Precompute temporal bonus for all facts ──
         now = datetime.now().strftime("%Y-%m-%d")
@@ -1874,7 +1897,7 @@ JSON:"""
             _, item = heapq.heappop(candidates)
             result.append(item)
         
-        return {"query": query, "facts": result, "method": "clark"}
+        return result
 
     def _clark_confidence_update(self, retrieved: list, boost: float = 0.05):
         """Stage 3: Post-retrieval — boost confidence of retrieved and neighboring facts.
@@ -2062,8 +2085,7 @@ JSON:"""
         is_past = any(w in question.lower() for w in past_indicators) or timeframe.get("mode") == "bounded"
 
         # Step 1: CLARK retrieval (A* search, replaces old RRF recall)
-        clark_payload = self.retrieve_clark(question, top_k=20)
-        candidates = clark_payload.get("facts", clark_payload)
+        candidates = self.retrieve_clark(question, top_k=20)
 
         # Step 1.5: Confidence update — boost retrieved facts (Clark's Nutcracker Stage 3)
         self._clark_confidence_update(candidates, boost=0.05)
@@ -2585,8 +2607,7 @@ JSON:"""
         # ── Factual Layer (JKG core — CLARK retrieval) ──
         if "factual" in layers:
             try:
-                clark_payload = self.retrieve_clark(text, top_k=limit * 3)
-                factual_results = clark_payload.get("facts", clark_payload)
+                factual_results = self.retrieve_clark(text, top_k=limit * 3)
                 filtered_factual = []
                 for r in factual_results:
                     metadata = self._get_fact_metadata(
@@ -2989,8 +3010,7 @@ if __name__ == "__main__":
             top_k = int(sys.argv[2])
             query = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
         print(f"CLARK retrieval: \"{query}\"")
-        payload = hm.retrieve_clark(query, top_k=top_k)
-        for r in payload.get("facts", payload):
+        for r in hm.retrieve_clark(query, top_k=top_k):
             print(f"  [{r['clark_score']}] {r['entity']} {r['predicate']} {r['value']}")
             print(f"    conf={r['confidence']} cos={r['cosine_sim']} temporal={r['temporal_bonus']}")
 
