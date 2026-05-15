@@ -9,7 +9,6 @@ from collections import defaultdict, deque
 
 import requests
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 # ═══════════════════════════════════════════════════
 # CONFIG
@@ -19,8 +18,8 @@ DB_PATH = os.path.expanduser(os.environ.get(
     "JKG_DB_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_v3.db")
 ))
-EMBEDDING_DIM = 384
-EMBEDDING_MODEL = os.environ.get("JKG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+EMBEDDING_DIM = 768
+EMBEDDING_MODEL = os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-2")
 
 def _load_env():
     """Load .env from current dir, ~/.jkg/, or JKG_ENV_PATH."""
@@ -91,9 +90,32 @@ class HybridMemory:
 
     @property
     def embedder(self):
-        if self._embedder is None:
-            self._embedder = SentenceTransformer(self._embedder_name)
-        return self._embedder
+        return self
+        
+    def encode(self, texts, **kwargs):
+        import requests
+        import numpy as np
+        import sys
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("WARNING: GEMINI_API_KEY not set. Returning zero vectors.", file=sys.stderr)
+            if isinstance(texts, str):
+                return np.zeros(768, dtype=np.float32)
+            return [np.zeros(768, dtype=np.float32) for _ in texts]
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
+        
+        if isinstance(texts, str):
+            payload = {"model": "models/gemini-embedding-2", "content": {"parts": [{"text": texts}]}, "outputDimensionality": 768}
+            resp = requests.post(url, json=payload).json()
+            return np.array(resp["embedding"]["values"], dtype=np.float32)
+        else:
+            results = []
+            for text in texts:
+                payload = {"model": "models/gemini-embedding-2", "content": {"parts": [{"text": text}]}, "outputDimensionality": 768}
+                resp = requests.post(url, json=payload).json()
+                results.append(np.array(resp["embedding"]["values"], dtype=np.float32))
+            return results
 
     # ═══════════════════════════════════════════════
     # SCHEMA — one DB, all tables
@@ -838,6 +860,12 @@ JSON:"""
                 try:
                     self.conn.execute("DELETE FROM facts_vec WHERE fact_id=?", (f["id"],))
                 except: pass
+                
+                # Delete from FTS5
+                try:
+                    self.conn.execute("DELETE FROM facts_fts_content WHERE id=?", (f["id"],))
+                    self.conn.execute("INSERT INTO facts_fts(facts_fts, rowid, entity_name, predicate, object_text) VALUES('delete', ?, '', '', '')", (f["id"],))
+                except: pass
 
         # Delete relations
         rel_count = self.conn.execute(
@@ -865,6 +893,9 @@ JSON:"""
             "INSERT INTO deletion_log(entity_id, reason, gdpr_request_id, verified_by) "
             "VALUES(?,?,?,?)",
             (eid, "GDPR right to erasure", request_id, "system"))
+            
+        # Scrub Episodic memory
+        self.conn.execute("DELETE FROM memory_sessions WHERE full_text LIKE ?", (f"%{entity_name}%",))
 
         self.conn.commit()
         return {"status": "deleted", "entity": entity_name, "eid": eid,
