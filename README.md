@@ -2,7 +2,7 @@
 
 > **Unified Memory Fabric — four-layer AI memory in a single SQLite transaction.**
 > Profile. Factual knowledge. Episodic sessions. Procedural skills. All fused by CLARK.
-> All local. Zero cloud dependencies.
+> Local-first SQLite architecture with optional Gemini embeddings via `GEMINI_API_KEY`.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
@@ -77,6 +77,15 @@ git clone https://github.com/altyshalu/jessica-knowledge-graph.git
 cd jessica-knowledge-graph
 pip install -e .
 ```
+
+### Embeddings setup
+
+```bash
+# Optional but recommended for semantic retrieval quality
+export GEMINI_API_KEY=your_key_here
+```
+
+If `GEMINI_API_KEY` is not set, JKG still runs but falls back to zero vectors, which degrades semantic retrieval quality.
 
 ### Your First Memory
 

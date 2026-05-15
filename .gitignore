@@ -10,3 +10,6 @@ build/
 *.backup
 venv/
 .venv/
+.pytest_cache/
+coverage.xml
+jkg_test_results.md

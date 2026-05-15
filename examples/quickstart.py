@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-JKG 3.0 Quickstart — запусти и проверь память за 30 секунд.
-Требуется: pip install jkg
+JKG 7.0 Quickstart — запусти и проверь память за 30 секунд.
+Требуется: pip install -e .
 """
 import os
 from jkg import HybridMemory
@@ -40,4 +40,4 @@ print("\n💬 ASK: Расскажи про компанию Алисы и её �
 result = hm.ask("Расскажи про компанию Алисы и её конкурентов")
 print(f"  {result['answer']}")
 
-print("\n✅ JKG 3.0 работает!")
+print("\n✅ JKG 7.0 работает!")

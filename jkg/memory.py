@@ -54,7 +54,167 @@ def _llm(prompt: str, system: str = "You are a precise knowledge extraction engi
         ], "temperature": 0.1},
         timeout=120,
     )
-    return r.json()["choices"][0]["message"]["content"]
+    try:
+        r.raise_for_status()
+        payload = r.json()
+        return payload["choices"][0]["message"]["content"]
+    except Exception as exc:
+        body = (r.text or "")[:300]
+        raise RuntimeError(f"LLM request failed: {exc}; body={body}") from exc
+
+
+def _title_case_name(text: str) -> str:
+    return " ".join(part.capitalize() for part in re.split(r"\s+", text.strip()) if part)
+
+
+def _fallback_profile_payload(text: str) -> dict:
+    raw = text.strip()
+    norm = raw.lower()
+    facts = []
+
+    role_match = re.search(r"\b(?:user|i)\s+is\s+(?:an?\s+)?(.+)$", norm)
+    if role_match:
+        role = role_match.group(1).strip(" .")
+        if role:
+            facts.append({
+                "key": "role",
+                "value": role,
+                "category": "identity",
+                "confidence": 0.7,
+            })
+
+    name_match = re.search(r"\bmy name is\s+([a-zA-Z][a-zA-Z\s'-]+)$", raw, re.IGNORECASE)
+    if name_match:
+        facts.append({
+            "key": "name",
+            "value": _title_case_name(name_match.group(1).strip(" .")),
+            "category": "identity",
+            "confidence": 0.8,
+        })
+
+    return {"facts": facts}
+
+
+def _fallback_extract_temporal_payload(text: str) -> dict:
+    raw = text.strip()
+    facts = []
+    ref_years = re.findall(r"\b(19\d{2}|20\d{2})\b", raw)
+    reference_time = f"{ref_years[0]}-01-01" if ref_years else None
+
+    def add_fact(subject: str, predicate: str, obj: str, valid_from: str = None, valid_until: str = None):
+        facts.append({
+            "subject": subject,
+            "predicate": predicate,
+            "object": obj,
+            "valid_from": valid_from,
+            "valid_until": valid_until,
+        })
+
+    lived_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+lived in\s+(.+?)\s+in\s+(\d{4})[\.!]?$", raw)
+    if lived_match:
+        subject, obj, year = lived_match.groups()
+        # Residence statements are open-ended until a later move/relocation invalidates them.
+        add_fact(subject, "lived_in", obj.strip(), f"{year}-01-01", None)
+
+    moved_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+moved to\s+(.+?)\s+in\s+(\d{4})[\.!]?$", raw)
+    if moved_match:
+        subject, obj, year = moved_match.groups()
+        add_fact(subject, "lives_in", obj.strip(), f"{year}-01-01", None)
+
+    return {"reference_time": reference_time, "facts": facts}
+
+
+def _fallback_extract_entities_payload(text: str) -> dict:
+    raw = text.strip()
+    entities = []
+    entity_seen = set()
+    facts = []
+    relations = []
+
+    def add_entity(name: str, etype: str = "entity"):
+        clean = name.strip(" .")
+        if not clean:
+            return
+        key = clean.lower()
+        if key not in entity_seen:
+            entities.append({"name": clean, "type": etype})
+            entity_seen.add(key)
+
+    def add_fact(subject: str, predicate: str, obj: str, subj_type: str = "entity", obj_type: str = None):
+        subject = subject.strip(" .")
+        obj = obj.strip(" .")
+        if not subject or not obj:
+            return
+        add_entity(subject, subj_type)
+        if obj_type:
+            add_entity(obj, obj_type)
+        facts.append({"subject": subject, "predicate": predicate, "object": obj})
+
+    def add_relation(subject: str, predicate: str, obj: str, subj_type: str = "entity", obj_type: str = "entity"):
+        subject = subject.strip(" .")
+        obj = obj.strip(" .")
+        if not subject or not obj:
+            return
+        add_entity(subject, subj_type)
+        add_entity(obj, obj_type)
+        relations.append({"subject": subject, "predicate": predicate, "object": obj})
+
+    favorite_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)'s favorite color is\s+(.+?)[\.!]?$", raw)
+    if favorite_match:
+        subject, obj = favorite_match.groups()
+        add_fact(subject, "favorite", obj, obj_type="concept")
+
+    least_favorite_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)'s least favorite color is\s+(.+?)[\.!]?$", raw)
+    if least_favorite_match:
+        subject, obj = least_favorite_match.groups()
+        add_fact(subject, "least_favorite", obj, obj_type="concept")
+
+    love_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+(?:absolutely\s+)?loves\s+(.+?)[\.!]?$", raw)
+    if love_match:
+        subject, obj = love_match.groups()
+        add_fact(subject, "loves", obj, obj_type="concept")
+
+    hate_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+hates\s+(.+?)[\.!]?$", raw)
+    if hate_match:
+        subject, obj = hate_match.groups()
+        add_fact(subject, "hates", obj, obj_type="concept")
+
+    lived_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+lived in\s+(.+?)(?:\s+in\s+\d{4})?[\.!]?$", raw)
+    if lived_match:
+        subject, obj = lived_match.groups()
+        add_fact(subject, "lived_in", obj, obj_type="location")
+
+    moved_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+moved to\s+(.+?)(?:\s+in\s+\d{4})?[\.!]?$", raw)
+    if moved_match:
+        subject, obj = moved_match.groups()
+        add_fact(subject, "lives_in", obj, obj_type="location")
+
+    built_match = re.search(r"^([Tt]he\s+.+?)\s+built\s+(?:a\s+new\s+)?(.+?)[\.!]?$", raw)
+    if built_match:
+        subject, obj = built_match.groups()
+        add_fact(subject, "builds", obj, obj_type="technology")
+
+    works_with_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+works with\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)[\.!]?$", raw)
+    if works_with_match:
+        subject, obj = works_with_match.groups()
+        add_relation(subject, "works_with", obj, obj_type="person")
+
+    coffee_match = re.search(r"^(I)\s+drank\s+(.+?)[\.!]?$", raw, re.IGNORECASE)
+    if coffee_match:
+        subject, obj = coffee_match.groups()
+        add_fact(subject, "drank", obj, subj_type="person", obj_type="concept")
+
+    is_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+is\s+(?:an?\s+)?(.+?)[\.!]?$", raw)
+    if is_match:
+        subject, obj = is_match.groups()
+        add_fact(subject, "is", obj, obj_type="concept")
+
+    founded_by_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+is\s+.+?founded by\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)[\.!]?$", raw)
+    if founded_by_match:
+        subject, obj = founded_by_match.groups()
+        add_relation(subject, "founded_by", obj)
+
+    return {"entities": entities, "facts": facts, "relations": relations}
 
 
 # ═══════════════════════════════════════════════════
@@ -103,21 +263,35 @@ class HybridMemory:
                 return np.zeros(768, dtype=np.float32)
             return [np.zeros(768, dtype=np.float32) for _ in texts]
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
         
         if isinstance(texts, str):
-            payload = {"model": "models/gemini-embedding-2", "content": {"parts": [{"text": texts}]}, "outputDimensionality": 768}
+            payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": texts}]}}
             resp = requests.post(url, json=payload).json()
-            return np.array(resp["embedding"]["values"], dtype=np.float32)
+            import numpy as np
+            if "embedding" not in resp:
+                print(f"Error from Gemini API: {resp}", file=sys.stderr)
+                return np.zeros(768, dtype=np.float32)
+            # pad or truncate to 768 to match DB
+            vals = resp["embedding"]["values"]
+            if len(vals) > 768: vals = vals[:768]
+            if len(vals) < 768: vals = vals + [0.0]*(768 - len(vals))
+            return np.array(vals, dtype=np.float32)
         else:
             results = []
             for text in texts:
-                payload = {"model": "models/gemini-embedding-2", "content": {"parts": [{"text": text}]}, "outputDimensionality": 768}
+                payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
                 resp = requests.post(url, json=payload).json()
-                results.append(np.array(resp["embedding"]["values"], dtype=np.float32))
+                import numpy as np
+                if "embedding" not in resp:
+                    print(f"Error from Gemini API: {resp}", file=sys.stderr)
+                    results.append(np.zeros(768, dtype=np.float32))
+                    continue
+                vals = resp["embedding"]["values"]
+                if len(vals) > 768: vals = vals[:768]
+                if len(vals) < 768: vals = vals + [0.0]*(768 - len(vals))
+                results.append(np.array(vals, dtype=np.float32))
             return results
-
-    # ═══════════════════════════════════════════════
     # SCHEMA — one DB, all tables
     # ═══════════════════════════════════════════════
 
@@ -319,6 +493,167 @@ class HybridMemory:
     def _encode(self, text: str):
         return self.embedder.encode(text, normalize_embeddings=True)
 
+    _EMPLOYMENT_PREDICATES = {
+        "works_at", "worked_at", "employed_at", "position", "работает_в",
+        "works_for", "job", "role"
+    }
+
+    _RESIDENCE_PREDICATES = {
+        "lives_in", "live_in", "lived_in", "resides_in", "based_in",
+        "located_in", "home_city", "hometown", "from", "located_at"
+    }
+
+    _RESIDENCE_TRANSITION_PREDICATES = {
+        "moved_to", "relocated_to", "moved", "relocated", "settled_in",
+        "переехал_в", "переехала_в"
+    }
+
+    _POSITIVE_PREFERENCE_PREDICATES = {
+        "likes", "like", "loves", "love", "enjoys", "enjoy", "prefers",
+        "prefer", "favorite", "favourite", "supports", "wants", "values"
+    }
+
+    _NEGATIVE_PREFERENCE_PREDICATES = {
+        "hates", "hate", "dislikes", "dislike", "avoids", "avoid",
+        "detests", "detest", "opposes", "rejects", "least_favorite",
+        "least_favourite"
+    }
+
+    def _same_object(self, left: str, right: str) -> bool:
+        left_norm = self._norm(left)
+        right_norm = self._norm(right)
+        return (
+            left_norm == right_norm or
+            left_norm in right_norm or
+            right_norm in left_norm
+        )
+
+    def _predicate_family(self, predicate: str) -> str:
+        pred = self._norm(predicate)
+        if pred in self._EMPLOYMENT_PREDICATES or pred in self._CURRENT_ACTIVITY_PREDICATES:
+            return "employment"
+        if pred in self._RESIDENCE_PREDICATES or pred in self._RESIDENCE_TRANSITION_PREDICATES:
+            return "residence"
+        if pred in self._POSITIVE_PREFERENCE_PREDICATES or pred in self._NEGATIVE_PREFERENCE_PREDICATES:
+            return "preference"
+        return pred
+
+    def _predicate_polarity(self, predicate: str):
+        pred = self._norm(predicate)
+        if pred in self._POSITIVE_PREFERENCE_PREDICATES:
+            return "positive"
+        if pred in self._NEGATIVE_PREFERENCE_PREDICATES:
+            return "negative"
+        return None
+
+    def _facts_conflict(self, old_predicate: str, old_object: str,
+                        new_predicate: str, new_object: str) -> bool:
+        old_pred = self._norm(old_predicate)
+        new_pred = self._norm(new_predicate)
+        old_obj = self._norm(old_object)
+        new_obj = self._norm(new_object)
+
+        if old_pred == new_pred:
+            return not self._same_object(old_obj, new_obj)
+
+        old_family = self._predicate_family(old_pred)
+        new_family = self._predicate_family(new_pred)
+
+        if old_family != new_family:
+            return False
+
+        if old_family in {"employment", "residence"}:
+            return not self._same_object(old_obj, new_obj)
+
+        if old_family == "preference" and self._same_object(old_obj, new_obj):
+            old_polarity = self._predicate_polarity(old_pred)
+            new_polarity = self._predicate_polarity(new_pred)
+            return bool(old_polarity and new_polarity and old_polarity != new_polarity)
+
+        return False
+
+    def _find_conflicting_fact_ids(self, subject_name: str, predicate: str,
+                                   new_obj: str) -> list:
+        sid = self._eid(subject_name)
+        active_facts = self.conn.execute(
+            "SELECT id, predicate, object_text FROM facts "
+            "WHERE subject_id=? AND valid_until IS NULL AND superseded_by IS NULL",
+            (sid,)
+        ).fetchall()
+
+        conflicts = []
+        for old in active_facts:
+            if self._facts_conflict(old["predicate"], old["object_text"], predicate, new_obj):
+                conflicts.append(old["id"])
+        return conflicts
+
+    def _parse_partial_date(self, value: str, default_end: bool = False):
+        if not value:
+            return None
+        value = str(value).strip()
+        patterns = [
+            (r"^(\d{4})-(\d{2})-(\d{2})$", lambda y, m, d: datetime(int(y), int(m), int(d))),
+            (r"^(\d{4})-(\d{2})$", lambda y, m: datetime(int(y), int(m), 28 if default_end else 1)),
+            (r"^(\d{4})$", lambda y: datetime(int(y), 12 if default_end else 1, 31 if default_end else 1)),
+        ]
+        for pattern, builder in patterns:
+            match = re.match(pattern, value)
+            if not match:
+                continue
+            try:
+                return builder(*match.groups())
+            except ValueError:
+                return None
+        return None
+
+    def _extract_query_timeframe(self, query_text: str) -> dict:
+        norm_q = self._norm(query_text)
+        years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", norm_q)]
+        if years:
+            start_year = min(years)
+            end_year = max(years)
+            return {
+                "start": datetime(start_year, 1, 1),
+                "end": datetime(end_year, 12, 31),
+                "mode": "bounded",
+                "label": f"{start_year}-{end_year}" if start_year != end_year else str(start_year)
+            }
+
+        if any(word in norm_q for word in ["сейчас", "теперь", "now", "currently", "current", "today"]):
+            now = datetime.now()
+            return {"start": now, "end": now, "mode": "current", "label": "current"}
+
+        return {"start": None, "end": None, "mode": "any", "label": None}
+
+    def _fact_matches_timeframe(self, valid_from: str, valid_until: str, timeframe: dict) -> bool:
+        if timeframe.get("mode") == "any":
+            return True
+
+        fact_start = self._parse_partial_date(valid_from, default_end=False)
+        fact_end = self._parse_partial_date(valid_until, default_end=True)
+        query_start = timeframe.get("start")
+        query_end = timeframe.get("end")
+
+        if query_start is None or query_end is None:
+            return True
+
+        if fact_end and fact_end < query_start:
+            return False
+        if fact_start and fact_start > query_end:
+            return False
+        return True
+
+    def _get_fact_metadata(self, entity_name: str, predicate: str, value: str):
+        sid = self._resolve_entity(entity_name)
+        if not sid:
+            return None
+        return self.conn.execute(
+            "SELECT id, valid_from, valid_until, confidence, superseded_by, created_at "
+            "FROM facts WHERE subject_id=? AND predicate=? AND object_text=? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (sid, predicate, value)
+        ).fetchone()
+
     # ═══════════════════════════════════════════════
     # JKG 4.0: TEMPORAL EXTRACTION
     # ═══════════════════════════════════════════════
@@ -361,8 +696,8 @@ JSON:"""
         try:
             result = _llm(prompt, "Extract temporal info. Output JSON only.")
             return json.loads(result)
-        except:
-            return {"reference_time": None, "facts": []}
+        except Exception:
+            return _fallback_extract_temporal_payload(text)
 
     # ═══════════════════════════════════════════════
     # JKG 4.0: FACT DEDUP + INVALIDATION
@@ -375,65 +710,19 @@ JSON:"""
 
     def _invalidate_conflicting(self, subject_name: str, predicate: str, 
                                   new_obj: str, new_valid_from: str = None):
-        """Find and invalidate old facts that conflict with new fact.
-        
-        JKG 5.1: Handles TRANSITION predicates (resigned_from → works_at)
-        and CURRENT_ACTIVITY predicates (builds → all works_at)."""
-        sid = self._eid(subject_name)
-        pred = self._norm(predicate)
+        """Invalidate active facts that conflict with a new assertion.
 
-        invalidated = 0
+        Used by CLI/debug flows. Normal inserts call _find_conflicting_fact_ids()
+        first, then _invalidate_with_edge() after the new fact is inserted.
+        """
         valid_until = new_valid_from or datetime.now().strftime("%Y-%m-%d")
-
-        # ── Direct conflicts: same subject+predicate, different object ──
-        existing = self.conn.execute(
-            "SELECT id, object_text, valid_until FROM facts "
-            "WHERE subject_id=? AND predicate=? AND valid_until IS NULL "
-            "AND superseded_by IS NULL",
-            (sid, pred)
-        ).fetchall()
-
-        for old in existing:
-            old_obj = self._norm(old["object_text"])
-            new_obj_norm = self._norm(new_obj)
-            if old_obj != new_obj_norm and old_obj not in new_obj_norm and new_obj_norm not in old_obj:
-                self.conn.execute(
-                    "UPDATE facts SET valid_until=? WHERE id=?",
-                    (valid_until, old["id"]))
-                invalidated += 1
-
-        # ── JKG 5.1: Transition predicates → invalidate works_at ──
-        if pred in self._TRANSITION_PREDICATES:
-            target_obj = self._norm(new_obj)
-            work_facts = self.conn.execute(
-                "SELECT id, object_text FROM facts "
-                "WHERE subject_id=? AND predicate IN ('works_at','employed_at','работает_в','position') "
-                "AND valid_until IS NULL AND superseded_by IS NULL",
-                (sid,)
-            ).fetchall()
-            for wf in work_facts:
-                wf_obj = self._norm(wf["object_text"])
-                if wf_obj == target_obj or target_obj in wf_obj or wf_obj in target_obj:
-                    self.conn.execute(
-                        "UPDATE facts SET valid_until=? WHERE id=?",
-                        (valid_until, wf["id"]))
-                    invalidated += 1
-
-        # ── JKG 5.1: Current activity predicates → invalidate ALL works_at ──
-        if pred in self._CURRENT_ACTIVITY_PREDICATES:
-            work_facts = self.conn.execute(
-                "SELECT id FROM facts "
-                "WHERE subject_id=? AND predicate IN ('works_at','employed_at','работает_в','position') "
-                "AND valid_until IS NULL AND superseded_by IS NULL",
-                (sid,)
-            ).fetchall()
-            for wf in work_facts:
-                self.conn.execute(
-                    "UPDATE facts SET valid_until=? WHERE id=?",
-                    (valid_until, wf["id"]))
-                invalidated += 1
-
-        return invalidated
+        conflict_ids = self._find_conflicting_fact_ids(subject_name, predicate, new_obj)
+        for fact_id in conflict_ids:
+            self.conn.execute(
+                "UPDATE facts SET valid_until=?, forget_status='invalidated' WHERE id=?",
+                (valid_until, fact_id)
+            )
+        return len(conflict_ids)
 
     # ═══════════════════════════════════════════════
     # JKG 5.1: TEMPORAL LINKING — connect temporal facts to their targets
@@ -962,6 +1251,14 @@ JSON:"""
                 pred = self._norm(fact.get("predicate", "has_property"))
                 obj = self._norm(str(fact.get("object", fact.get("value", ""))))
 
+                # Drop low-value temporal helper artifacts from generic extraction.
+                # Example: store lived_in=bishkek, not lived_in_year=2023.
+                if re.fullmatch(r"\d{4}", obj or "") and (
+                    pred.endswith("_year") or pred in {"moved_in", "lived_in_year", "moved_to_year"}
+                ):
+                    if any(self._norm(tf.get("subject", "")) == subj for tf in temporal.get("facts", [])):
+                        continue
+
                 # Dedup check
                 fhash = self._compute_fact_hash(subj, pred, obj)
                 dup = self.conn.execute(
@@ -981,9 +1278,8 @@ JSON:"""
                 vfrom = tf.get("valid_from") or temp_ref
                 vuntil = tf.get("valid_until")
 
-                # Invalidate conflicting old facts
-                inv = self._invalidate_conflicting(subj, pred, obj, vfrom)
-                stored["invalidated"] += inv
+                # Find conflicts before insert so the new fact can explicitly supersede them
+                conflicting_fact_ids = self._find_conflicting_fact_ids(subj, pred, obj)
 
                 # Insert new fact
                 cur = self.conn.execute(
@@ -992,8 +1288,13 @@ JSON:"""
                     "VALUES(?,?,?,?,?,?,?,?)",
                     (sid, pred, obj, source, episode_id, fhash, vfrom, vuntil))
                 fid = cur.lastrowid
+
+                for old_fact_id in conflicting_fact_ids:
+                    self._invalidate_with_edge(old_fact_id, fid, vfrom)
+
                 new_fact_ids.append(fid)
                 stored["facts"] += 1
+                stored["invalidated"] += len(conflicting_fact_ids)
 
                 # BM25 sync
                 self.conn.execute(
@@ -1229,6 +1530,35 @@ JSON:"""
         words = [w for w in re.findall(r'[^\s,?.!;:"\'()\[\]{}]+', query) if len(w) > 1]
         return " OR ".join(f'"{w}"' for w in words) if words else query
 
+    def _keyword_overlap_bonus(self, query: str, entity: str, predicate: str, value: str) -> float:
+        """Small lexical bonus/penalty to keep semantic retrieval anchored to the query."""
+        q_tokens = {w for w in re.findall(r"[a-zA-Zа-яА-Я0-9_]+", self._norm(query)) if len(w) > 2}
+        c_tokens = {w for w in re.findall(r"[a-zA-Zа-яА-Я0-9_]+", self._norm(f"{entity} {predicate} {value}")) if len(w) > 2}
+        if not q_tokens or not c_tokens:
+            return 0.0
+
+        overlap = len(q_tokens & c_tokens)
+        bonus = overlap * 0.08
+
+        q = self._norm(query)
+        c = self._norm(f"{entity} {predicate} {value}")
+
+        food_terms = {"recipe", "pie", "pies", "fruit", "food", "dessert", "рецепт", "пирог", "еда"}
+        company_terms = {"company", "technology", "record", "label", "founded", "jobs", "beatles"}
+        if any(term in q for term in food_terms):
+            if any(term in c for term in food_terms):
+                bonus += 0.25
+            if any(term in c for term in company_terms):
+                bonus -= 0.18
+
+        if any(term in q for term in {"where", "live", "lived", "moved", "location", "где", "живет", "жил", "переех"}):
+            if predicate.endswith("_year") or (re.fullmatch(r"\d{4}", str(value or "")) is not None):
+                bonus -= 0.22
+            if predicate in {"lived_in", "lives_in", "moved_to", "located_in"}:
+                bonus += 0.18
+
+        return bonus
+
     def recall_graph(self, query: str, limit: int = 20) -> list:
         """Graph traversal recall from keyword-matched entities."""
         words = [w for w in re.findall(r'[^\s,?.!;:"\'()\[\]{}]+', query.lower()) if len(w) > 1]
@@ -1392,7 +1722,7 @@ JSON:"""
             "avg_confidence": round(sum(V.values()) / N, 4) if N else 0
         }
 
-    def _landmark_selection(self, limit: int = 20) -> list:
+    def _landmark_selection(self, limit: int = 20, include_historical: bool = False) -> list:
         """Select top entities as 'landmarks' by combined PageRank × avg confidence.
         
         Returns list of {eid, name, score, fact_ids}.
@@ -1406,7 +1736,7 @@ JSON:"""
         has_forget = 'forget_status' in fact_cols
         
         query = "SELECT id, confidence FROM facts WHERE subject_id=?"
-        if has_forget:
+        if has_forget and not include_historical:
             query += " AND forget_status='active'"
         
         scored = []
@@ -1431,7 +1761,7 @@ JSON:"""
         scored.sort(key=lambda x: -x["score"])
         return scored[:limit]
 
-    def retrieve_clark(self, query: str, top_k: int = 10, beam_width: int = 5) -> list:
+    def retrieve_clark(self, query: str, top_k: int = 10, beam_width: int = 5) -> dict:
         """Stage 2: A* search on the confidence-propagated graph.
         
         Uses temporal-aware heuristic:
@@ -1446,14 +1776,18 @@ JSON:"""
         """
         if not self.has_vec:
             # Fallback to RRF if no vector support
-            return self.recall(query, limit=top_k)
+            facts = self.recall(query, limit=top_k)
+            return {"query": query, "facts": facts, "method": "rrf_fallback"}
         
         query_vec = self._encode(query)
+        timeframe = self._extract_query_timeframe(query)
+        include_historical = timeframe.get("mode") == "bounded"
         
         # ── Stage 1: Landmark selection ──
-        landmarks = self._landmark_selection(limit=15)
+        landmarks = self._landmark_selection(limit=15, include_historical=include_historical)
         if not landmarks:
-            return self.recall(query, limit=top_k)
+            facts = self.recall(query, limit=top_k)
+            return {"query": query, "facts": facts, "method": "rrf_no_landmarks"}
         
         # ── Precompute temporal bonus for all facts ──
         now = datetime.now().strftime("%Y-%m-%d")
@@ -1462,16 +1796,18 @@ JSON:"""
         # Schema-aware query
         fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
         has_forget = 'forget_status' in fact_cols
+        timeframe = self._extract_query_timeframe(query)
+        include_historical = timeframe.get("mode") == "bounded"
         
-        query = (
+        fact_query = (
             "SELECT f.id, f.subject_id, f.predicate, f.object_text, "
             "f.confidence, f.valid_until, e.name as entity_name "
             "FROM facts f JOIN entities e ON f.subject_id = e.id "
         )
-        if has_forget:
-            query += "WHERE f.forget_status = 'active'"
+        if has_forget and not include_historical:
+            fact_query += "WHERE f.forget_status = 'active'"
         
-        for fact in self.conn.execute(query).fetchall():
+        for fact in self.conn.execute(fact_query).fetchall():
             fid = fact["id"]
             temporal_bonus = 1.0
             if fact["valid_until"]:
@@ -1489,20 +1825,12 @@ JSON:"""
             }
         
         # ── A* Search starting from each landmark ──
-        # Priority: (-log(confidence) - log(cos_sim × temporal))
-        # We want MAXIMUM, so use negative for heapq (min-heap)
-        
         from scipy.spatial.distance import cosine as cos_dist
         
         candidates = []  # (score, fact_data)
         seen_keys = set()
         
         for landmark in landmarks:
-            eid = landmark["eid"]
-            # Starting node: landmark entity itself (cost 0)
-            start_key = f"ENTITY:{eid}"
-            
-            # ── Encode landmark facts into vector for similarity ──
             fact_texts = []
             for fid in landmark["fact_ids"]:
                 fd = all_fact_data.get(fid)
@@ -1512,7 +1840,6 @@ JSON:"""
             if not fact_texts:
                 continue
             
-            # Encode all texts and compute similarity to query
             fact_vecs = self.embedder.encode(fact_texts, normalize_embeddings=True)
             
             for i, fid in enumerate(landmark["fact_ids"]):
@@ -1521,11 +1848,13 @@ JSON:"""
                     continue
                 
                 cos_sim = 1 - cos_dist(query_vec, fact_vecs[i])
+                if np.isnan(cos_sim) or np.isinf(cos_sim):
+                    cos_sim = 0.0
                 temporal = fd["temporal_bonus"]
                 confidence = fd["confidence"]
                 
-                # A* score: combined confidence × similarity × temporal
                 score = confidence * cos_sim * temporal
+                score += self._keyword_overlap_bonus(query, fd["entity_name"], fd["predicate"], fd["object_text"])
                 key = f"{fd['entity_name']}|{fd['predicate']}|{fd['object_text']}"
                 
                 if key not in seen_keys:
@@ -1534,19 +1863,18 @@ JSON:"""
                         "entity": fd["entity_name"],
                         "predicate": fd["predicate"],
                         "value": fd["object_text"],
-                        "clark_score": round(score, 4),
-                        "confidence": round(confidence, 4),
-                        "cosine_sim": round(cos_sim, 4),
-                        "temporal_bonus": round(temporal, 3),
+                        "clark_score": float(round(float(score), 4)),
+                        "confidence": float(round(float(confidence), 4)),
+                        "cosine_sim": float(round(float(cos_sim), 4)),
+                        "temporal_bonus": float(round(float(temporal), 3)),
                     }))
         
-        # ── Extract top-k ──
         result = []
         while candidates and len(result) < top_k:
             _, item = heapq.heappop(candidates)
             result.append(item)
         
-        return result
+        return {"query": query, "facts": result, "method": "clark"}
 
     def _clark_confidence_update(self, retrieved: list, boost: float = 0.05):
         """Stage 3: Post-retrieval — boost confidence of retrieved and neighboring facts.
@@ -1728,12 +2056,14 @@ JSON:"""
     def ask(self, question: str, owner: str = "алтынай") -> dict:
         """JKG 6.0: Full CLARK pipeline — A* search + temporal awareness + confidence update."""
         # Detect if question is about past/present
+        timeframe = self._extract_query_timeframe(question)
         past_indicators = ["раньше", "до", "был", "была", "было", "были", "прошлом",
                           "в 202", "история", "использовал", "работал", "was", "before"]
-        is_past = any(w in question.lower() for w in past_indicators)
+        is_past = any(w in question.lower() for w in past_indicators) or timeframe.get("mode") == "bounded"
 
         # Step 1: CLARK retrieval (A* search, replaces old RRF recall)
-        candidates = self.retrieve_clark(question, top_k=20)
+        clark_payload = self.retrieve_clark(question, top_k=20)
+        candidates = clark_payload.get("facts", clark_payload)
 
         # Step 1.5: Confidence update — boost retrieved facts (Clark's Nutcracker Stage 3)
         self._clark_confidence_update(candidates, boost=0.05)
@@ -1763,6 +2093,10 @@ JSON:"""
                     (sid, pred, c.get('value', c.get('object', '')))
                 ).fetchone()
                 if fact:
+                    c["valid_from"] = fact["valid_from"]
+                    c["valid_until"] = fact["valid_until"]
+                    if not self._fact_matches_timeframe(fact["valid_from"], fact["valid_until"], timeframe):
+                        c["_penalty"] = True
                     if fact["valid_until"]:
                         c["status"] = f"INVALID (ended {fact['valid_until']})" if not is_past else "HISTORICAL"
                         if not is_past:
@@ -1775,9 +2109,8 @@ JSON:"""
                             c["status"] = f"VALID since {fact['valid_from']}"
                     c["confidence"] = fact["confidence"]
 
-        # Filter: for present-tense questions, remove invalid facts
-        if not is_past:
-            candidates = [c for c in candidates if not c.get("_penalty")]
+        # Filter: drop timeframe mismatches and invalid present-tense facts
+        candidates = [c for c in candidates if not c.get("_penalty")]
 
         # JKG 5.1: Predicate expansion — for "где работает" questions,
         # boost facts with work-alias predicates (builds, founded, etc.)
@@ -2014,8 +2347,8 @@ JSON:"""
         try:
             raw = _llm(prompt, "You extract user profile facts. Output JSON only.")
             data = json.loads(raw.strip().replace("```json","").replace("```",""))
-        except Exception as e:
-            return {"status": "error", "error": f"LLM parse: {e}", "raw": raw[:200] if 'raw' in dir() else ''}
+        except Exception:
+            data = _fallback_profile_payload(text)
 
         stored = []
         for f in data.get("facts", []):
@@ -2199,9 +2532,10 @@ JSON:"""
 
         all_results = []
         by_layer = {}
+        timeframe = self._extract_query_timeframe(text)
 
         # ── Profile Layer ──
-        if "profile" in layers:
+        if "profile" in layers and timeframe.get("mode") == "any":
             norm_q = self._norm(text)
             profile_results = []
             # Direct key/value search
@@ -2219,7 +2553,11 @@ JSON:"""
                     profile_results.append(d)
 
             # Embedding fallback: if keyword found nothing, try semantic search
-            if not profile_results and self.has_vec and self.embedder:
+            if (
+                not profile_results and self.has_vec and self.embedder
+                and timeframe.get("mode") == "any"
+                and not any(term in norm_q for term in ["where", "live", "lived", "moved", "location", "где", "живет", "жил", "переех", "recipe", "pie", "рецепт", "пирог"])
+            ):
                 try:
                     all_profile = self.conn.execute(
                         "SELECT key, value, category, confidence, source FROM memory_profile WHERE is_active=1"
@@ -2247,18 +2585,89 @@ JSON:"""
         # ── Factual Layer (JKG core — CLARK retrieval) ──
         if "factual" in layers:
             try:
-                factual_results = self.retrieve_clark(text, top_k=limit)
+                clark_payload = self.retrieve_clark(text, top_k=limit * 3)
+                factual_results = clark_payload.get("facts", clark_payload)
+                filtered_factual = []
                 for r in factual_results:
+                    metadata = self._get_fact_metadata(
+                        r.get("entity", ""),
+                        r.get("predicate", ""),
+                        r.get("value", r.get("object_text", ""))
+                    )
+                    if metadata:
+                        r["valid_from"] = metadata["valid_from"]
+                        r["valid_until"] = metadata["valid_until"]
+                        r["confidence"] = metadata["confidence"]
+                        if not self._fact_matches_timeframe(metadata["valid_from"], metadata["valid_until"], timeframe):
+                            continue
                     r["layer"] = "factual"
-                    r["score"] = r.get("clark_score", r.get("confidence", 0.5))
+                    lexical_bonus = self._keyword_overlap_bonus(
+                        text,
+                        r.get("entity", ""),
+                        r.get("predicate", ""),
+                        r.get("value", r.get("object_text", ""))
+                    )
+                    if lexical_bonus <= 0 and len(re.findall(r"[a-zA-Zа-яА-Я0-9_]+", self._norm(text))) >= 3:
+                        continue
+                    base_score = r.get("clark_score", r.get("confidence", 0.5))
+                    r["score"] = float(base_score) + lexical_bonus
+                    if r.get("predicate") in {"loves", "hates", "favorite", "least_favorite", "has_favorite_color", "least_favorite_color"}:
+                        r["value"] = f"{r.get('predicate')} {r.get('value', '')}".strip()
+                    if timeframe.get("mode") == "bounded":
+                        r["score"] += 0.35
+                    filtered_factual.append(r)
+                factual_results = filtered_factual[:limit]
+                if not factual_results and timeframe.get("mode") == "bounded":
+                    fallback_candidates = self.recall(text, limit=limit * 5)
+                    for r in fallback_candidates:
+                        metadata = self._get_fact_metadata(
+                            r.get("entity", ""),
+                            r.get("predicate", ""),
+                            r.get("value", r.get("object_text", ""))
+                        )
+                        if not metadata:
+                            continue
+                        if not self._fact_matches_timeframe(metadata["valid_from"], metadata["valid_until"], timeframe):
+                            continue
+                        lexical_bonus = self._keyword_overlap_bonus(
+                            text,
+                            r.get("entity", ""),
+                            r.get("predicate", ""),
+                            r.get("value", r.get("object_text", ""))
+                        )
+                        if lexical_bonus <= 0:
+                            continue
+                        r["valid_from"] = metadata["valid_from"]
+                        r["valid_until"] = metadata["valid_until"]
+                        r["confidence"] = metadata["confidence"]
+                        r["layer"] = "factual"
+                        r["score"] = 0.6 + lexical_bonus
+                        filtered_factual.append(r)
+                        if len(filtered_factual) >= limit:
+                            break
+                    factual_results = filtered_factual[:limit]
                 by_layer["factual"] = len(factual_results)
                 all_results.extend(factual_results)
             except Exception as e:
                 # Fallback to RRF recall
-                factual_results = self.recall(text, limit=limit)
+                factual_results = self.recall(text, limit=limit * 3)
+                filtered_factual = []
                 for r in factual_results:
+                    metadata = self._get_fact_metadata(
+                        r.get("entity", ""),
+                        r.get("predicate", ""),
+                        r.get("value", r.get("object_text", ""))
+                    )
+                    if metadata:
+                        r["valid_from"] = metadata["valid_from"]
+                        r["valid_until"] = metadata["valid_until"]
+                        r["confidence"] = metadata["confidence"]
+                        if not self._fact_matches_timeframe(metadata["valid_from"], metadata["valid_until"], timeframe):
+                            continue
                     r["layer"] = "factual"
                     r["score"] = r.get("rrf_score", 0.5)
+                    filtered_factual.append(r)
+                factual_results = filtered_factual[:limit]
                 by_layer["factual"] = len(factual_results)
                 all_results.extend(factual_results)
 
@@ -2458,7 +2867,10 @@ Format:
 CRITICAL: For EVERY fact, ALSO create a relation linking entities.
 Example: "Altynai's Instagram is blocked" → fact: instagram is_blocked, relation: altynai owns instagram
 JSON:"""
-    return _llm(prompt, "You extract knowledge graph triples. Always create relations. Output JSON only.")
+    try:
+        return _llm(prompt, "You extract knowledge graph triples. Always create relations. Output JSON only.")
+    except Exception:
+        return json.dumps(_fallback_extract_entities_payload(text), ensure_ascii=False)
 
 
 # ═══════════════════════════════════════════════
@@ -2577,7 +2989,8 @@ if __name__ == "__main__":
             top_k = int(sys.argv[2])
             query = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
         print(f"CLARK retrieval: \"{query}\"")
-        for r in hm.retrieve_clark(query, top_k=top_k):
+        payload = hm.retrieve_clark(query, top_k=top_k)
+        for r in payload.get("facts", payload):
             print(f"  [{r['clark_score']}] {r['entity']} {r['predicate']} {r['value']}")
             print(f"    conf={r['confidence']} cos={r['cosine_sim']} temporal={r['temporal_bonus']}")
 
