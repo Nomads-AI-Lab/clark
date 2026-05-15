@@ -1,6 +1,10 @@
-"""JKG 5.1 — HYBRID Memory: Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving.
-JKG 6.0 — CLARK: Confidence-Layered Adaptive Retrieval for Knowledge (bio-inspired retrieval)."""
+"""
+JKG 7.0 — Unified Memory Fabric.
+Four-layer AI memory: Profile + Factual + Episodic + Procedural.
+Single SQLite database. CLARK retrieval (Value Iteration + A*).
+Dynamic session-start context injection. Sync bridges.
+"""
 from .memory import HybridMemory
 
-__version__ = "5.1.0"
+__version__ = "7.0.0"
 __all__ = ["HybridMemory"]

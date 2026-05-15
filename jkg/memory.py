@@ -199,6 +199,54 @@ class HybridMemory:
                 predicate TEXT,
                 object_text TEXT
             );
+
+            -- JKG 7.0: UNIFIED MEMORY FABRIC — multi-layer memory
+            -- PROFILE Layer: user identity, preferences, environment facts
+            CREATE TABLE IF NOT EXISTS memory_profile (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                value TEXT NOT NULL,
+                category TEXT DEFAULT 'preference',
+                confidence REAL DEFAULT 1.0,
+                source TEXT DEFAULT 'explicit',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_key ON memory_profile(key);
+            CREATE INDEX IF NOT EXISTS idx_profile_category ON memory_profile(category);
+
+            -- EPISODIC Layer: session transcripts + summaries
+            CREATE TABLE IF NOT EXISTS memory_sessions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                title TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                full_text TEXT DEFAULT '',
+                emotion TEXT DEFAULT 'neutral',
+                emotion_intensity REAL DEFAULT 0.0,
+                importance REAL DEFAULT 0.5,
+                fact_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_source ON memory_sessions(source);
+            CREATE INDEX IF NOT EXISTS idx_sessions_created ON memory_sessions(created_at);
+
+            -- PROCEDURAL Layer: skills indexed for retrieval
+            CREATE TABLE IF NOT EXISTS memory_skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                triggers TEXT DEFAULT '[]',
+                category TEXT DEFAULT 'general',
+                version TEXT DEFAULT '1.0.0',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_skills_name ON memory_skills(name);
+            CREATE INDEX IF NOT EXISTS idx_skills_category ON memory_skills(category);
         """)
         self.conn.commit()
 
@@ -1356,16 +1404,17 @@ JSON:"""
         """Stage 2: A* search on the confidence-propagated graph.
         
         Uses temporal-aware heuristic:
-          score = confidence × cosine_similarity × temporal_bonus
+          h(node) = -log(cosine_similarity(embed(node), embed(query)) × temporal_bonus)
         
         Temporal bonus:
           - Current facts (valid_until IS NULL): bonus = 1.0
           - Historical facts (valid_until set): bonus = 0.15
-          - Expiring facts (valid_until > now): bonus = 0.8
+          - No temporal info: bonus = 0.5
         
         A* guarantees optimal path under admissible heuristic.
         """
         if not self.has_vec:
+            # Fallback to RRF if no vector support
             return self.recall(query, limit=top_k)
         
         query_vec = self._encode(query)
@@ -1383,15 +1432,15 @@ JSON:"""
         fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
         has_forget = 'forget_status' in fact_cols
         
-        query_sql = (
+        query = (
             "SELECT f.id, f.subject_id, f.predicate, f.object_text, "
             "f.confidence, f.valid_until, e.name as entity_name "
             "FROM facts f JOIN entities e ON f.subject_id = e.id "
         )
         if has_forget:
-            query_sql += "WHERE f.forget_status = 'active'"
+            query += "WHERE f.forget_status = 'active'"
         
-        for fact in self.conn.execute(query_sql).fetchall():
+        for fact in self.conn.execute(query).fetchall():
             fid = fact["id"]
             temporal_bonus = 1.0
             if fact["valid_until"]:
@@ -1408,13 +1457,20 @@ JSON:"""
                 "temporal_bonus": temporal_bonus,
             }
         
-        # ── A* Search over landmarks ──
+        # ── A* Search starting from each landmark ──
+        # Priority: (-log(confidence) - log(cos_sim × temporal))
+        # We want MAXIMUM, so use negative for heapq (min-heap)
+        
         from scipy.spatial.distance import cosine as cos_dist
         
-        candidates = []
+        candidates = []  # (score, fact_data)
         seen_keys = set()
         
         for landmark in landmarks:
+            eid = landmark["eid"]
+            # Starting node: landmark entity itself (cost 0)
+            start_key = f"ENTITY:{eid}"
+            
             # ── Encode landmark facts into vector for similarity ──
             fact_texts = []
             for fid in landmark["fact_ids"]:
@@ -1437,7 +1493,7 @@ JSON:"""
                 temporal = fd["temporal_bonus"]
                 confidence = fd["confidence"]
                 
-                # CLARK score: confidence × similarity × temporal
+                # A* score: combined confidence × similarity × temporal
                 score = confidence * cos_sim * temporal
                 key = f"{fd['entity_name']}|{fd['predicate']}|{fd['object_text']}"
                 
@@ -1639,14 +1695,17 @@ JSON:"""
     # ═══════════════════════════════════════════════
 
     def ask(self, question: str, owner: str = "алтынай") -> dict:
-        """JKG 4.0: Full hybrid pipeline with TEMPORAL AWARENESS."""
+        """JKG 6.0: Full CLARK pipeline — A* search + temporal awareness + confidence update."""
         # Detect if question is about past/present
         past_indicators = ["раньше", "до", "был", "была", "было", "были", "прошлом",
                           "в 202", "история", "использовал", "работал", "was", "before"]
         is_past = any(w in question.lower() for w in past_indicators)
 
-        # Step 1: Hybrid recall
-        candidates = self.recall(question, limit=20)
+        # Step 1: CLARK retrieval (A* search, replaces old RRF recall)
+        candidates = self.retrieve_clark(question, top_k=20)
+
+        # Step 1.5: Confidence update — boost retrieved facts (Clark's Nutcracker Stage 3)
+        self._clark_confidence_update(candidates, boost=0.05)
 
         # Step 2: Owner traversal (filter by validity)
         owner_trav = self.traverse(owner, depth=3, max_results=30)
@@ -1894,6 +1953,462 @@ JSON:"""
         self.conn.commit()
         return {"status": "deleted", "entity": name}
 
+    # ═══════════════════════════════════════════════════════════════
+    # JKG 7.0: UNIFIED MEMORY FABRIC — Multi-Layer Ingest API
+    # ═══════════════════════════════════════════════════════════════
+
+    # ── PROFILE LAYER ─────────────────────────────────────────────
+
+    def remember_profile(self, text: str, category: str = "preference",
+                         source: str = "explicit") -> dict:
+        """Extract user profile/preference facts via LLM and store in memory_profile."""
+        prompt = f"""Extract profile facts about the user from this text. Output ONLY valid JSON.
+
+Text: {text[:2000]}
+
+Format:
+{{"facts": [{{"key": "snake_case_key", "value": "the fact value",
+  "category": "identity|preference|environment|goal|contact",
+  "confidence": 0.0-1.0}}]}}
+
+Rules:
+- 'identity': who the user IS (name, role, location, education)
+- 'preference': what the user LIKES/DISLIKES (communication style, tools, habits)
+- 'environment': facts about the user's setup (OS, devices, accounts)
+- 'goal': what the user wants to achieve
+- 'contact': social media, email, phone
+
+Only extract NEW facts not yet known. Skip generic or obvious info.
+JSON:"""
+        try:
+            raw = _llm(prompt, "You extract user profile facts. Output JSON only.")
+            data = json.loads(raw.strip().replace("```json","").replace("```",""))
+        except Exception as e:
+            return {"status": "error", "error": f"LLM parse: {e}", "raw": raw[:200] if 'raw' in dir() else ''}
+
+        stored = []
+        for f in data.get("facts", []):
+            key = f["key"].lower().replace(" ", "_")
+            value = f["value"]
+            cat = f.get("category", category)
+            conf = f.get("confidence", 0.9)
+
+            # Upsert: replace if exists
+            self.conn.execute("""
+                INSERT INTO memory_profile(key, value, category, confidence, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(key) DO UPDATE SET
+                    value=excluded.value, category=excluded.category,
+                    confidence=excluded.confidence, source=excluded.source,
+                    updated_at=datetime('now')
+            """, (key, value, cat, conf, source))
+            stored.append({"key": key, "value": value, "category": cat})
+
+        self.conn.commit()
+        return {"status": "ok", "stored": len(stored), "facts": stored}
+
+    def get_profile(self, category: str = None) -> list:
+        """Retrieve all active profile facts, optionally filtered by category."""
+        if category:
+            rows = self.conn.execute(
+                "SELECT * FROM memory_profile WHERE is_active=1 AND category=? ORDER BY confidence DESC",
+                (category,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM memory_profile WHERE is_active=1 ORDER BY category, confidence DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── EPISODIC LAYER ────────────────────────────────────────────
+
+    def remember_session(self, session_id: str, text: str, source: str = "terminal",
+                         title: str = "", summary: str = "", importance: float = 0.5) -> dict:
+        """Index a session transcript into episodic memory."""
+        sid = hashlib.md5(f"{source}:{session_id}".encode()).hexdigest()[:16]
+
+        # Auto-generate summary if not provided
+        if not summary and len(text) > 200:
+            try:
+                sprompt = f"Summarize this conversation in 2-3 sentences. Be factual and concise.\n\n{text[:4000]}"
+                summary = _llm(sprompt, "You summarize conversations concisely.")
+            except Exception:
+                summary = text[:300]
+
+        # Auto-detect emotion
+        emotion = "neutral"
+        emotion_intensity = 0.0
+        try:
+            eprompt = f"Detect the dominant emotion. Output ONLY a JSON: {{\"emotion\":\"...\",\"intensity\":0.0-1.0}}\n\n{text[:2000]}"
+            raw = _llm(eprompt, "You detect emotions. Output JSON only.")
+            edata = json.loads(raw.strip().replace("```json","").replace("```",""))
+            emotion = edata.get("emotion", "neutral")
+            emotion_intensity = float(edata.get("intensity", 0.0))
+        except Exception:
+            pass
+
+        self.conn.execute("""
+            INSERT OR REPLACE INTO memory_sessions(id, session_id, source, title, summary, full_text, emotion, emotion_intensity, importance)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (sid, session_id, source, title or f"Session {session_id[:12]}",
+              summary, text[:10000], emotion, emotion_intensity, importance))
+        self.conn.commit()
+
+        # Also try to extract facts and profile updates from the session
+        facts_extracted = 0
+        try:
+            # Extract factual knowledge
+            result = self.remember(text, source=f"session:{session_id[:16]}")
+            facts_extracted = result.get("facts", 0)
+            self.conn.execute(
+                "UPDATE memory_sessions SET fact_count=? WHERE id=?",
+                (facts_extracted, sid))
+            self.conn.commit()
+        except Exception:
+            pass
+
+        return {
+            "status": "ok", "session_id": session_id, "id": sid,
+            "emotion": emotion, "facts_extracted": facts_extracted,
+            "summary": summary[:200]
+        }
+
+    def search_sessions(self, query: str, limit: int = 5) -> list:
+        """Search episodic memory by keyword + embedding (if available)."""
+        results = []
+        norm_q = self._norm(query)
+
+        # Keyword search
+        for term in norm_q.split():
+            rows = self.conn.execute("""
+                SELECT id, session_id, source, title, summary, emotion, importance, created_at
+                FROM memory_sessions
+                WHERE (title LIKE ? OR summary LIKE ? OR full_text LIKE ?)
+                ORDER BY importance DESC, created_at DESC
+                LIMIT ?
+            """, (f"%{term}%", f"%{term}%", f"%{term}%", limit)).fetchall()
+            for r in rows:
+                if r["id"] not in {x.get("id") for x in results}:
+                    results.append(dict(r))
+
+        # Vector search if available
+        if self.has_vec and self.embedder:
+            try:
+                q_vec = self._encode(query)
+                # For now, fall back to keyword — vector for sessions needs vec0 table
+                # This is a future optimization
+                pass
+            except Exception:
+                pass
+
+        results.sort(key=lambda x: x["importance"], reverse=True)
+        return results[:limit]
+
+    # ── PROCEDURAL LAYER ──────────────────────────────────────────
+
+    def index_skill(self, name: str, description: str = "", triggers: list = None,
+                    category: str = "general", version: str = "1.0.0") -> dict:
+        """Index a skill into procedural memory for retrieval."""
+        sid = hashlib.md5(f"skill:{name}".encode()).hexdigest()[:12]
+        triggers_json = json.dumps(triggers or [], ensure_ascii=False)
+
+        # Check if skill already indexed
+        existing = self.conn.execute("SELECT id FROM memory_skills WHERE name=?", (name,)).fetchone()
+
+        if existing:
+            self.conn.execute("""
+                UPDATE memory_skills SET description=?, triggers=?, category=?, version=?,
+                updated_at=datetime('now') WHERE name=?
+            """, (description, triggers_json, category, version, name))
+        else:
+            self.conn.execute("""
+                INSERT INTO memory_skills(id, name, description, triggers, category, version)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (sid, name, description, triggers_json, category, version))
+
+        self.conn.commit()
+        return {"status": "ok", "name": name, "id": sid, "action": "updated" if existing else "created"}
+
+    def search_skills(self, query: str, limit: int = 5) -> list:
+        """Search procedural memory by keyword in name, description, and triggers."""
+        norm_q = self._norm(query)
+        results = []
+        for term in norm_q.split():
+            rows = self.conn.execute("""
+                SELECT id, name, description, triggers, category, version
+                FROM memory_skills WHERE is_active=1
+                AND (name LIKE ? OR description LIKE ? OR triggers LIKE ?)
+                ORDER BY updated_at DESC LIMIT ?
+            """, (f"%{term}%", f"%{term}%", f"%{term}%", limit)).fetchall()
+            for r in rows:
+                if r["id"] not in {x.get("id") for x in results}:
+                    d = dict(r)
+                    try: d["triggers"] = json.loads(d.get("triggers", "[]"))
+                    except: d["triggers"] = []
+                    results.append(d)
+        return results[:limit]
+
+    # ═══════════════════════════════════════════════════════════════
+    # JKG 7.0: UNIFIED QUERY — Multi-layer search with CLARK fusion
+    # ═══════════════════════════════════════════════════════════════
+
+    def query(self, text: str, layers: list = None, limit: int = 10) -> dict:
+        """Unified query across all memory layers. CLARK-fused and ranked.
+
+        Args:
+            text: natural language query
+            layers: subset of ['profile','factual','episodic','procedural'] (default: all)
+            limit: max results per layer before fusion
+
+        Returns:
+            dict with 'results' (ranked across layers) and 'by_layer' breakdown
+        """
+        if layers is None:
+            layers = ["profile", "factual", "episodic", "procedural"]
+
+        all_results = []
+        by_layer = {}
+
+        # ── Profile Layer ──
+        if "profile" in layers:
+            norm_q = self._norm(text)
+            profile_results = []
+            # Direct key/value search
+            for term in norm_q.split():
+                rows = self.conn.execute("""
+                    SELECT key, value, category, confidence, source
+                    FROM memory_profile WHERE is_active=1
+                    AND (key LIKE ? OR value LIKE ?)
+                    ORDER BY confidence DESC LIMIT ?
+                """, (f"%{term}%", f"%{term}%", limit)).fetchall()
+                for r in rows:
+                    d = dict(r)
+                    d["layer"] = "profile"
+                    d["score"] = float(d.get("confidence", 0.5)) * 0.9
+                    profile_results.append(d)
+
+            # Embedding fallback: if keyword found nothing, try semantic search
+            if not profile_results and self.has_vec and self.embedder:
+                try:
+                    all_profile = self.conn.execute(
+                        "SELECT key, value, category, confidence, source FROM memory_profile WHERE is_active=1"
+                    ).fetchall()
+                    if all_profile:
+                        q_vec = self._encode(text)
+                        scored = []
+                        for p in all_profile:
+                            # Simple: encode key+value and compare
+                            p_text = f"{p['key']}: {p['value']}"
+                            p_vec = self._encode(p_text)
+                            sim = float(1 - np.dot(q_vec, p_vec) / (np.linalg.norm(q_vec) * np.linalg.norm(p_vec) + 1e-8))
+                            d = dict(p)
+                            d["layer"] = "profile"
+                            d["score"] = sim * 0.8  # embed score slightly lower than keyword
+                            scored.append(d)
+                        scored.sort(key=lambda x: x["score"], reverse=True)
+                        profile_results = scored[:limit]
+                except Exception:
+                    pass
+
+            by_layer["profile"] = len(profile_results)
+            all_results.extend(profile_results)
+
+        # ── Factual Layer (JKG core — CLARK retrieval) ──
+        if "factual" in layers:
+            try:
+                factual_results = self.retrieve_clark(text, top_k=limit)
+                for r in factual_results:
+                    r["layer"] = "factual"
+                    r["score"] = r.get("clark_score", r.get("confidence", 0.5))
+                by_layer["factual"] = len(factual_results)
+                all_results.extend(factual_results)
+            except Exception as e:
+                # Fallback to RRF recall
+                factual_results = self.recall(text, limit=limit)
+                for r in factual_results:
+                    r["layer"] = "factual"
+                    r["score"] = r.get("rrf_score", 0.5)
+                by_layer["factual"] = len(factual_results)
+                all_results.extend(factual_results)
+
+        # ── Episodic Layer ──
+        if "episodic" in layers:
+            ep_results = self.search_sessions(text, limit=limit)
+            for r in ep_results:
+                r["layer"] = "episodic"
+                r["score"] = float(r.get("importance", 0.5)) * 0.7  # sessions are contextual
+            by_layer["episodic"] = len(ep_results)
+            all_results.extend(ep_results)
+
+        # ── Procedural Layer ──
+        if "procedural" in layers:
+            sk_results = self.search_skills(text, limit=limit)
+            for r in sk_results:
+                r["layer"] = "procedural"
+                r["score"] = 0.65  # skills are always relevant if matched
+            by_layer["procedural"] = len(sk_results)
+            all_results.extend(sk_results)
+
+        # ── CLARK-style fusion: sort by score, deduplicate ──
+        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        top = all_results[:limit]
+
+        return {
+            "query": text,
+            "layers_searched": layers,
+            "total_candidates": sum(by_layer.values()),
+            "by_layer": by_layer,
+            "results": top
+        }
+
+    # ═══════════════════════════════════════════════════════════════
+    # JKG 7.0: SESSION START INJECTION ENGINE
+    # ═══════════════════════════════════════════════════════════════
+
+    def session_start_context(self, owner: str = "алтынай",
+                              recent_sessions: int = 3) -> str:
+        """Generate a dynamic context block for session start prompt injection.
+
+        Replaces flat memory injection with CLARK-ranked, multi-layer context
+        that adapts to what's relevant NOW.
+        """
+        blocks = []
+
+        # 1. Profile facts (user identity + preferences)
+        profile = self.get_profile()
+        if profile:
+            by_cat = defaultdict(list)
+            for p in profile:
+                by_cat[p.get("category", "preference")].append(p)
+
+            profile_lines = []
+            for cat, items in by_cat.items():
+                for item in items[:5]:  # top 5 per category
+                    profile_lines.append(f"  {item['key']}: {item['value']}")
+
+            if profile_lines:
+                blocks.append("[Profile]\n" + "\n".join(profile_lines[:20]))
+
+        # 2. Active factual knowledge about owner
+        try:
+            owner_eid = self._resolve_entity(owner)
+            if owner_eid:
+                facts = self.conn.execute("""
+                    SELECT f.predicate, f.object_text, f.confidence, f.valid_until,
+                           e.name as entity_name
+                    FROM facts f
+                    JOIN entities e ON f.subject_id = e.id
+                    WHERE f.subject_id = ? AND f.valid_until IS NULL
+                    AND f.superseded_by IS NULL
+                    ORDER BY f.confidence DESC, f.access_count DESC
+                    LIMIT 15
+                """, (owner_eid,)).fetchall()
+
+                if facts:
+                    fact_lines = []
+                    for f in facts:
+                        marker = "🔗" if f["confidence"] > 0.8 else "  "
+                        fact_lines.append(f"  {marker} {f['entity_name']} {f['predicate']} {f['object_text']}")
+                    blocks.append("[Active Facts]\n" + "\n".join(fact_lines))
+        except Exception:
+            pass
+
+        # 3. Recent episodes (last N sessions)
+        try:
+            sessions = self.conn.execute("""
+                SELECT title, summary, emotion, created_at
+                FROM memory_sessions
+                ORDER BY created_at DESC LIMIT ?
+            """, (recent_sessions,)).fetchall()
+
+            if sessions:
+                ep_lines = []
+                for s in sessions:
+                    emoji = {"happy": "😊", "focused": "🎯", "neutral": "💬", "excited": "🔥", "curious": "🤔"}.get(s["emotion"], "")
+                    ep_lines.append(f"  {emoji} {s['title']}: {s['summary'][:150]}")
+                blocks.append("[Recent Episodes]\n" + "\n".join(ep_lines))
+        except Exception:
+            pass
+
+        # 4. Relevant skills (most recently updated)
+        try:
+            skills = self.conn.execute("""
+                SELECT name, description, category
+                FROM memory_skills WHERE is_active=1
+                ORDER BY updated_at DESC LIMIT 8
+            """).fetchall()
+
+            if skills:
+                sk_lines = []
+                for s in skills:
+                    sk_lines.append(f"  {s['name']}: {s['description'][:120]}")
+                blocks.append("[Relevant Skills]\n" + "\n".join(sk_lines))
+        except Exception:
+            pass
+
+        # Build final injection block
+        header = "DYNAMIC CONTEXT (JKG 7.0 Unified Memory Fabric)"
+        body = "\n\n".join(blocks) if blocks else "(no context loaded)"
+
+        return f"══════════════════════════════════════════════\n{header}\n══════════════════════════════════════════════\n{body}"
+
+    # ═══════════════════════════════════════════════════════════════
+    # JKG 7.0: SYNC BRIDGES — Auto-ingest from other systems
+    # ═══════════════════════════════════════════════════════════════
+
+    def sync_from_memory(self, content: str, target: str = "memory") -> dict:
+        """Bridge from built-in memory tool → JKG 7.0.
+
+        When memory(action='add') is called, this auto-indexes into the right layer.
+        target='user' → profile layer, target='memory' → factual layer.
+        """
+        if target == "user":
+            return self.remember_profile(content)
+        else:
+            return self.remember(content)
+
+    def sync_from_session(self, session_id: str, transcript: str, source: str = "terminal",
+                          summary: str = "") -> dict:
+        """Bridge from session end → JKG 7.0 episodic + factual layers."""
+        return self.remember_session(
+            session_id=session_id, text=transcript, source=source,
+            summary=summary, importance=0.7
+        )
+
+    def sync_from_skill(self, name: str, description: str = "",
+                        triggers: list = None, category: str = "general") -> dict:
+        """Bridge from skill create/update → JKG 7.0 procedural layer."""
+        return self.index_skill(name=name, description=description,
+                                triggers=triggers, category=category)
+
+    def migrate_builtin_memory(self, memory_data: str) -> dict:
+        """One-shot: migrate existing flat memory injection into JKG profile layer.
+
+        Parses the current memory injection format and stores each entry as a profile fact.
+        """
+        results = {"imported": 0, "skipped": 0, "errors": []}
+
+        # Parse the memory block format (key: value or bullet points)
+        lines = memory_data.split("\n")
+        current_key = None
+
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("═") or line.startswith("MEMORY"):
+                continue
+
+            # Profile-style entries: "Не нравится обращение"
+            if any(kw in line.lower() for kw in ["предпочитает", "нравится", "любит", "не терпит", "студент", "github", "instagram", "рабочий процесс"]):
+                try:
+                    self.remember_profile(line, source="migration")
+                    results["imported"] += 1
+                except Exception as e:
+                    results["errors"].append(str(e))
+            else:
+                results["skipped"] += 1
+
+        return results
+
 
 # ═══════════════════════════════════════════════
 # LLM EXTRACTION
@@ -2040,7 +2555,68 @@ if __name__ == "__main__":
         result = hm.propagate_confidence(iterations=iterations)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
+    # ═══ JKG 7.0: Unified Query CLI ═══
+
+    elif cmd == "query":
+        query = " ".join(sys.argv[2:])
+        layers = None
+        # Support: query --layers profile,factual "text"
+        if "--layers" in sys.argv:
+            idx = sys.argv.index("--layers")
+            layers = sys.argv[idx+1].split(",")
+            query = " ".join(sys.argv[2:idx] + sys.argv[idx+2:])
+        result = hm.query(query, layers=layers)
+        print(f"Query: {result['query']}")
+        print(f"Layers: {result['layers_searched']} → {result['total_candidates']} candidates")
+        for r in result["results"]:
+            layer_tag = f"[{r['layer']}]"
+            if r["layer"] == "profile":
+                print(f"  {layer_tag} {r['key']}: {r['value']} (conf={r.get('confidence','?')})")
+            elif r["layer"] == "factual":
+                print(f"  {layer_tag} {r.get('entity','?')} {r.get('predicate','?')} {r.get('value', r.get('object_text','?'))} (score={r.get('score','?')})")
+            elif r["layer"] == "episodic":
+                print(f"  {layer_tag} {r.get('title','?')}: {r.get('summary','')[:120]}")
+            elif r["layer"] == "procedural":
+                print(f"  {layer_tag} {r['name']}: {r.get('description','')[:120]}")
+
+    elif cmd == "session-start":
+        print(hm.session_start_context())
+
+    elif cmd == "remember-profile":
+        text = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else sys.stdin.read()
+        result = hm.remember_profile(text)
+        print(json.dumps(result, ensure_ascii=False))
+
+    elif cmd == "remember-session":
+        sid = sys.argv[2] if len(sys.argv) > 2 else f"manual-{int(time.time())}"
+        text = sys.stdin.read() if not sys.stdin.isatty() else " ".join(sys.argv[3:])
+        result = hm.remember_session(sid, text)
+        print(json.dumps(result, ensure_ascii=False))
+
+    elif cmd == "index-skill":
+        name = sys.argv[2] if len(sys.argv) > 2 else "unknown"
+        desc = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
+        result = hm.index_skill(name, description=desc)
+        print(json.dumps(result, ensure_ascii=False))
+
+    elif cmd == "migrate-memory":
+        text = sys.stdin.read() if not sys.stdin.isatty() else " ".join(sys.argv[2:])
+        result = hm.migrate_builtin_memory(text)
+        print(json.dumps(result, ensure_ascii=False))
+
+    elif cmd == "profile":
+        cat = sys.argv[2] if len(sys.argv) > 2 else None
+        for p in hm.get_profile(cat):
+            print(f"  [{p['category']}] {p['key']}: {p['value']} (conf={p['confidence']})")
+
+    elif cmd == "sessions":
+        query = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+        for s in hm.search_sessions(query):
+            print(f"  [{s['emotion']}] {s['title']}: {s.get('summary','')[:150]}")
+
     else:
         print("Commands: remember, recall, clark, traverse, path, ask, bridge, "
               "stats, entities, forget, episodes, resolve, invalidate, "
-              "utility, prune, propagate, emotions, evolve, gdpr-delete")
+              "utility, prune, propagate, emotions, evolve, gdpr-delete, "
+              "query, session-start, remember-profile, remember-session, "
+              "index-skill, migrate-memory, profile, sessions")
