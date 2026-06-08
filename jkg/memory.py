@@ -35,28 +35,10 @@ def _load_env():
                     os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 _load_env()
 
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-API_BASE = "https://api.deepseek.com"
-
 def _llm(prompt: str, system: str = "You are a precise knowledge extraction engine.") -> str:
-    import requests
+    from jkg.providers import DeepSeekLLMProvider
 
-    r = requests.post(
-        f"{API_BASE}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-        json={"model": "deepseek-chat", "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ], "temperature": 0.1},
-        timeout=120,
-    )
-    try:
-        r.raise_for_status()
-        payload = r.json()
-        return payload["choices"][0]["message"]["content"]
-    except Exception as exc:
-        body = (r.text or "")[:300]
-        raise RuntimeError(f"LLM request failed: {exc}; body={body}") from exc
+    return DeepSeekLLMProvider.from_env().complete(prompt=prompt, system=system)
 
 
 def _title_case_name(text: str) -> str:
@@ -256,7 +238,6 @@ class HybridMemory:
         
     def encode(self, texts, **kwargs):
         """Unified encode: delegates to Gemini API or SentenceTransformer."""
-        import requests as _requests
         import numpy as _np
         
         # If we're a SentenceTransformer-like instance (set by embedder property)
@@ -264,34 +245,14 @@ class HybridMemory:
             return self._embedder.encode(texts, normalize_embeddings=True, **kwargs)
         
         # Gemini API path
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY is required for Gemini embeddings")
-        
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
-        
-        def _call_gemini(text):
-            payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
-            resp = _requests.post(
-                url,
-                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-                json=payload,
-                timeout=30,
-            ).json()
-            if "embedding" not in resp:
-                raise RuntimeError(f"Gemini embedding request failed: {resp}")
-            vals = resp["embedding"]["values"]
-            dim = EMBEDDING_DIM
-            if len(vals) > dim:
-                vals = vals[:dim]
-            if len(vals) < dim:
-                vals = vals + [0.0] * (dim - len(vals))
-            return _np.array(vals, dtype=_np.float32)
+        from jkg.providers import GeminiEmbeddingProvider
+
+        provider = GeminiEmbeddingProvider.from_env(dimension=EMBEDDING_DIM)
         
         if isinstance(texts, str):
-            return _call_gemini(texts)
+            return _np.array(provider.embed_text(texts), dtype=_np.float32)
         
-        return [_call_gemini(t) for t in texts]
+        return [_np.array(vector, dtype=_np.float32) for vector in provider.embed_batch(texts)]
     # SCHEMA — one DB, all tables
     # ═══════════════════════════════════════════════
 
