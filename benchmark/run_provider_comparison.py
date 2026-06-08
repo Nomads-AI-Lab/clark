@@ -139,6 +139,10 @@ def main() -> int:
     parser.add_argument("--dataset", default=os.environ.get("LONGMEMEVAL_PATH"), required=False)
     parser.add_argument("--providers", default="jkg,mem0")
     parser.add_argument("--max-questions", type=int, default=1)
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--checkpoint-dir", default="benchmark/results/provider-checkpoints")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--sleep-seconds", type=float, default=0.0)
     parser.add_argument("--output", default=None)
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
@@ -147,7 +151,8 @@ def main() -> int:
         raise SystemExit("LONGMEMEVAL_PATH or --dataset is required")
     dataset = Path(args.dataset).expanduser()
     records = load_dataset(dataset)[: args.max_questions]
-    run_id = f"provider-compare-{uuid.uuid4()}"
+    run_id = args.run_id or f"provider-compare-{uuid.uuid4()}"
+    checkpoint_dir = Path(args.checkpoint_dir)
 
     all_results: dict[str, Any] = {
         "benchmark": "LongMemEval-S provider comparison",
@@ -160,12 +165,28 @@ def main() -> int:
     for provider_name in [item.strip() for item in args.providers.split(",") if item.strip()]:
         adapter = build_adapter(provider_name, run_id)
         started = time.time()
+        checkpoint_path = checkpoint_dir / f"{run_id}.{adapter.name}.jsonl"
         try:
-            result = run_provider(adapter, records)
+            result = run_provider(
+                adapter,
+                records,
+                checkpoint_path=checkpoint_path,
+                resume=args.resume,
+                sleep_seconds=args.sleep_seconds,
+            )
+            result["status"] = "completed"
+        except Exception as exc:
+            result = metrics_from_checkpoint(adapter.name, checkpoint_path)
+            result["status"] = "failed"
+            result["error"] = str(exc)
+            result["error_type"] = type(exc).__name__
+            if not result["total"]:
+                raise
+        finally:
             result["elapsed_seconds"] = round(time.time() - started, 3)
+            result["checkpoint"] = str(checkpoint_path)
             all_results["providers"][adapter.name] = result
             print_report(result)
-        finally:
             if args.cleanup:
                 adapter.cleanup()
 
@@ -184,27 +205,40 @@ def build_adapter(provider_name: str, run_id: str) -> MemoryAdapter:
     raise SystemExit(f"Unsupported provider: {provider_name}")
 
 
-def run_provider(adapter: MemoryAdapter, records: list[dict[str, Any]]) -> dict[str, Any]:
-    metrics: dict[str, Any] = {
-        "benchmark": "LongMemEval-S provider comparison",
-        "system": adapter.name,
-        "total": 0,
-        "skipped_abstention": 0,
-        "skipped_invalid": 0,
-        "recall_at_k": {},
-        "by_type": {},
-        "failures": [],
-    }
+def run_provider(
+    adapter: MemoryAdapter,
+    records: list[dict[str, Any]],
+    *,
+    checkpoint_path: Path,
+    resume: bool = False,
+    sleep_seconds: float = 0.0,
+) -> dict[str, Any]:
+    metrics = empty_metrics(adapter.name)
+    completed_question_ids: set[str] = set()
+    if resume:
+        completed_question_ids = load_checkpoint(adapter.name, checkpoint_path, metrics)
 
     for index, record in enumerate(records, start=1):
         try:
             item = normalize_record(record)
         except ValueError as exc:
             metrics["skipped_invalid"] += 1
-            metrics["failures"].append({"index": index, "error": str(exc)})
+            failure = {"index": index, "error": str(exc)}
+            metrics["failures"].append(failure)
+            write_checkpoint(checkpoint_path, {"status": "invalid", **failure})
+            continue
+        if item["question_id"] in completed_question_ids:
             continue
         if not item["gold_session_ids"]:
             metrics["skipped_abstention"] += 1
+            write_checkpoint(
+                checkpoint_path,
+                {
+                    "status": "abstention",
+                    "question_id": item["question_id"],
+                    "question_type": item["question_type"],
+                },
+            )
             continue
 
         adapter.index_sessions(item["question_id"], item["sessions"])
@@ -215,14 +249,92 @@ def run_provider(adapter: MemoryAdapter, records: list[dict[str, Any]]) -> dict[
         metrics["by_type"].setdefault(question_type, {"total": 0, "hits": {}})
         metrics["by_type"][question_type]["total"] += 1
         gold = set(item["gold_session_ids"])
+        hits_for_checkpoint: dict[str, bool] = {}
         for top_k in TOP_K_VALUES:
             key = f"recall@{top_k}"
             if set(ranked_session_ids[:top_k]) & gold:
                 metrics["recall_at_k"][key] = metrics["recall_at_k"].get(key, 0) + 1
                 hits = metrics["by_type"][question_type]["hits"]
                 hits[key] = hits.get(key, 0) + 1
+                hits_for_checkpoint[key] = True
+            else:
+                hits_for_checkpoint[key] = False
+
+        write_checkpoint(
+            checkpoint_path,
+            {
+                "status": "scored",
+                "question_id": item["question_id"],
+                "question_type": question_type,
+                "gold_session_ids": item["gold_session_ids"],
+                "ranked_session_ids": ranked_session_ids[: max(TOP_K_VALUES)],
+                "hits": hits_for_checkpoint,
+            },
+        )
+
+        if index % 5 == 0:
+            hits = metrics["recall_at_k"].get("recall@5", 0)
+            print(f"[{adapter.name} {index}/{len(records)}] recall@5={hits / max(1, metrics['total']):.3f}")
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
 
     return metrics
+
+
+def empty_metrics(system: str) -> dict[str, Any]:
+    return {
+        "benchmark": "LongMemEval-S provider comparison",
+        "system": system,
+        "total": 0,
+        "skipped_abstention": 0,
+        "skipped_invalid": 0,
+        "recall_at_k": {},
+        "by_type": {},
+        "failures": [],
+    }
+
+
+def load_checkpoint(system: str, path: Path, metrics: dict[str, Any]) -> set[str]:
+    completed: set[str] = set()
+    if not path.exists():
+        return completed
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        question_id = entry.get("question_id")
+        if question_id:
+            completed.add(str(question_id))
+        status = entry.get("status")
+        if status == "scored":
+            question_type = str(entry["question_type"])
+            metrics["total"] += 1
+            metrics["by_type"].setdefault(question_type, {"total": 0, "hits": {}})
+            metrics["by_type"][question_type]["total"] += 1
+            for key, hit in entry.get("hits", {}).items():
+                if hit:
+                    metrics["recall_at_k"][key] = metrics["recall_at_k"].get(key, 0) + 1
+                    hits = metrics["by_type"][question_type]["hits"]
+                    hits[key] = hits.get(key, 0) + 1
+        elif status == "abstention":
+            metrics["skipped_abstention"] += 1
+        elif status == "invalid":
+            metrics["skipped_invalid"] += 1
+            metrics["failures"].append(entry)
+    metrics["system"] = system
+    return completed
+
+
+def metrics_from_checkpoint(system: str, path: Path) -> dict[str, Any]:
+    metrics = empty_metrics(system)
+    load_checkpoint(system, path, metrics)
+    return metrics
+
+
+def write_checkpoint(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def require_env(name: str) -> None:

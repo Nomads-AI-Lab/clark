@@ -83,7 +83,10 @@ JKG_DATABASE_URL=postgresql://jkg:strong-password@127.0.0.1:5432/jkg \
 uv run python benchmark/run_provider_comparison.py \
   --dataset /path/to/longmemeval_s_cleaned.json \
   --providers jkg,mem0 \
-  --max-questions 1 \
+  --max-questions 5 \
+  --run-id provider-compare-jkg-mem0-5 \
+  --checkpoint-dir benchmark/results/provider-checkpoints \
+  --resume \
   --output benchmark/results/provider-comparison.json
 ```
 

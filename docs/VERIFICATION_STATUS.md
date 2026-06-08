@@ -63,9 +63,6 @@ This file tracks real verification runs for the production-readiness branch. It 
 
 ## Not Yet Fully Verified
 
-- Full LongMemEval-S run across all 500 questions.
-  - Completed.
-  - Remaining work is broader provider comparison, not JKG full-run completion.
 - Competitive benchmark runs against top memory providers.
   - Requires installing and configuring those providers in the same environment.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.
