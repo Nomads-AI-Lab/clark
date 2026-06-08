@@ -29,3 +29,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added Gemini timeout retry controls and resumed the full LongMemEval-S job.
 - Recorded the completed 500-question LongMemEval-S JKG benchmark result.
 - Added checkpoint/resume support to the provider comparison runner.
+- Added external published memory benchmark baselines with attribution and caveats.

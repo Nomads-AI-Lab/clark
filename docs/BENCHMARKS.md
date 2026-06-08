@@ -57,6 +57,30 @@ Remote full run on `82.38.4.10`:
 - Recall@20: 498/500 = 0.996
 - Elapsed: 4963.962 seconds
 
+## External Published Baselines
+
+These are published/self-reported external numbers. They were not reproduced in this repository and should not be mixed with the verified JKG run without the caveats below.
+
+| System | Published result | Metric/source note | Reproduced here |
+| --- | ---: | --- | --- |
+| JKG / CLARK | 98.6% | Recall@5, 500/500 LongMemEval-S retrieval run on our server | Yes |
+| MemPalace | 96.6% | Published raw LongMemEval Recall@5 | No |
+| agentmemory | 95.2% | Published LongMemEval-S retrieval R@5 | No |
+| Mem0 | 93.4 | Official Mem0 research LongMemEval score; methodology/metric is not guaranteed identical to retrieval Recall@5 | No |
+
+Caveats:
+
+- JKG's number above is a real run on the test server with Gemini embeddings and Postgres/pgvector.
+- Mem0, MemPalace, and agentmemory numbers are external published claims.
+- The only direct JKG-vs-Mem0 run in this repo so far is a 1-question smoke: both hit Recall@1, but JKG completed in 2.341 seconds and Mem0 in 260.276 seconds.
+- Do not publish "beats everyone" phrasing until either external methodology is matched exactly or the competitors are run locally under the same harness.
+
+Sources:
+
+- Mem0 research: https://mem0.ai/research
+- MemPalace benchmark page: https://www.mempalace.tech/benchmarks
+- agentmemory benchmark page: https://www.agentmemory.tech/
+
 ## Required Before Public Claims
 
 - Publish the dataset version and preprocessing steps.

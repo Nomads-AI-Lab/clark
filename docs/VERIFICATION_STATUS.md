@@ -53,6 +53,11 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Result: both providers recall@1/3/5/10/20 = 1.0.
   - Elapsed: JKG 2.341 seconds, Mem0 260.276 seconds.
   - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/provider-comparison-jkg-mem0-q1.json`.
+- External published baselines collected:
+  - MemPalace published raw LongMemEval Recall@5: 96.6%.
+  - agentmemory published LongMemEval-S retrieval R@5: 95.2%.
+  - Mem0 official research published LongMemEval score: 93.4.
+  - These are not reproduced locally and are documented separately from verified JKG runs.
 - Local MCP stdio handshake:
   - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
   - Runs initialize, list tools, and `jkg_health`.
@@ -64,7 +69,8 @@ This file tracks real verification runs for the production-readiness branch. It 
 ## Not Yet Fully Verified
 
 - Competitive benchmark runs against top memory providers.
-  - Requires installing and configuring those providers in the same environment.
+  - Published external baselines have been collected.
+  - Full local reproduction across providers remains incomplete because Mem0's real extraction path is too slow for multi-question runs under the current budget/time constraints.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.
   - The server currently does not have `claude`, `codex`, `cursor`, or `gemini` CLIs installed.
   - Template parsing is covered by tests, but client runtime connection is not.
