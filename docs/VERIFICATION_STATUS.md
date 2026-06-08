@@ -30,6 +30,9 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Backend: real Postgres/pgvector and Gemini embeddings.
   - Result: recall@1/3/5/10/20 = 1.0 for the single scored question.
   - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-smoke.json`.
+- Local MCP stdio handshake:
+  - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
+  - Runs initialize, list tools, and `jkg_health`.
 
 ## Not Yet Fully Verified
 

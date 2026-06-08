@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+def test_mcp_stdio_lists_and_calls_health_tool(tmp_path) -> None:
+    async def run_client() -> None:
+        env = os.environ.copy()
+        env["JKG_DB_PATH"] = str(tmp_path / "memory.db")
+        env.pop("JKG_DATABASE_URL", None)
+
+        server = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", "from jkg.cli import main; main(['mcp'])"],
+            env=env,
+        )
+        async with stdio_client(server) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                tool_names = {tool.name for tool in tools.tools}
+                assert {"jkg_health", "jkg_stats", "jkg_query", "jkg_remember"} <= tool_names
+
+                result = await session.call_tool("jkg_health", {})
+                text = "".join(getattr(item, "text", "") for item in result.content)
+                assert "overall_ok" in text
+
+    asyncio.run(run_client())
