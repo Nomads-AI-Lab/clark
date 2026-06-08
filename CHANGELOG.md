@@ -25,3 +25,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added a real provider comparison runner for JKG and Mem0 OSS.
 - Recorded the first real JKG-vs-Mem0 LongMemEval-S comparison result.
 - Added partial LongMemEval-S artifact preservation for Gemini quota failures.
+- Recorded the slow background LongMemEval-S resume job and checkpoint status.
