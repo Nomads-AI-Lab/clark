@@ -1,0 +1,47 @@
+import json
+import os
+import subprocess
+import sys
+
+
+def test_package_exports_hybrid_memory():
+    from jkg import HybridMemory
+
+    assert HybridMemory.__name__ == "HybridMemory"
+
+
+def test_module_cli_stats_uses_configured_db_path(tmp_path):
+    db_path = tmp_path / "jkg.db"
+    env = {**os.environ, "JKG_DB_PATH": str(db_path)}
+
+    result = subprocess.run(
+        [sys.executable, "-m", "jkg.memory", "stats"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["entities"] == 0
+    assert payload["facts"] == 0
+    assert db_path.exists()
+
+
+def test_console_entrypoint_stats_uses_configured_db_path(tmp_path):
+    db_path = tmp_path / "jkg-console.db"
+    env = {**os.environ, "JKG_DB_PATH": str(db_path)}
+
+    result = subprocess.run(
+        ["jkg", "stats"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["relations"] == 0
+    assert payload["episodes"] == 0
+    assert db_path.exists()
+

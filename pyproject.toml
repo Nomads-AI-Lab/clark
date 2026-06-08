@@ -42,3 +42,7 @@ jkg = "jkg.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jkg*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
