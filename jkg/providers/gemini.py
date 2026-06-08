@@ -32,6 +32,7 @@ class GeminiEmbeddingProvider:
             api_key=os.environ.get("GEMINI_API_KEY", ""),
             model=os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-001"),
             dimension=dimension,
+            timeout=int(os.environ.get("JKG_GEMINI_TIMEOUT_SECONDS", "30")),
             max_retries=int(os.environ.get("JKG_GEMINI_MAX_RETRIES", "5")),
         )
 
@@ -91,13 +92,22 @@ class GeminiEmbeddingProvider:
 
     def _post_with_retries(self, url: str, payload: dict) -> requests.Response:
         last_response: requests.Response | None = None
+        last_error: requests.RequestException | None = None
         for attempt in range(self.max_retries + 1):
-            response = requests.post(
-                url,
-                headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
-                json=payload,
-                timeout=self.timeout,
-            )
+            try:
+                response = requests.post(
+                    url,
+                    headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=self.timeout,
+                )
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                last_error = exc
+                if attempt >= self.max_retries:
+                    raise
+                self._sleep_before_retry(attempt, None)
+                continue
+
             if response.status_code not in {429, 500, 502, 503, 504}:
                 return response
 
@@ -105,12 +115,18 @@ class GeminiEmbeddingProvider:
             if attempt >= self.max_retries:
                 return response
 
-            retry_after = response.headers.get("retry-after")
-            if retry_after and retry_after.isdigit():
-                delay = float(retry_after)
-            else:
-                delay = min(60.0, 2.0**attempt)
-            time.sleep(delay)
+            self._sleep_before_retry(attempt, response)
 
+        if last_error:
+            raise last_error
         assert last_response is not None
         return last_response
+
+    @staticmethod
+    def _sleep_before_retry(attempt: int, response: requests.Response | None) -> None:
+        retry_after = response.headers.get("retry-after") if response is not None else None
+        if retry_after and retry_after.isdigit():
+            delay = float(retry_after)
+        else:
+            delay = min(60.0, 2.0**attempt)
+        time.sleep(delay)
