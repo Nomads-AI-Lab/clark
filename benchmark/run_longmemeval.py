@@ -28,6 +28,11 @@ def main() -> int:
         help="Path to LongMemEval-S JSON file. Can also be set with LONGMEMEVAL_PATH.",
     )
     parser.add_argument("--max-questions", type=int, default=None)
+    parser.add_argument("--start-index", type=int, default=0)
+    parser.add_argument("--stop-after", type=int, default=None)
+    parser.add_argument("--sleep-seconds", type=float, default=0.0)
+    parser.add_argument("--checkpoint-jsonl", default=None)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--tenant-id", default=f"benchmark-{uuid.uuid4()}")
     parser.add_argument("--output", default=None)
     parser.add_argument("--cleanup", action="store_true", help="Delete this benchmark tenant after the run.")
@@ -45,6 +50,8 @@ def main() -> int:
     records = load_dataset(dataset_path)
     if args.max_questions is not None:
         records = records[: args.max_questions]
+    if args.start_index:
+        records = records[args.start_index :]
     if not records:
         raise SystemExit("Dataset is empty")
 
@@ -53,7 +60,16 @@ def main() -> int:
     run_tenant_id = args.tenant_id
 
     started = time.time()
-    results = run_benchmark(memory, records, run_tenant_id=run_tenant_id)
+    checkpoint_path = Path(args.checkpoint_jsonl) if args.checkpoint_jsonl else None
+    results = run_benchmark(
+        memory,
+        records,
+        run_tenant_id=run_tenant_id,
+        stop_after=args.stop_after,
+        sleep_seconds=args.sleep_seconds,
+        checkpoint_path=checkpoint_path,
+        resume=args.resume,
+    )
     results["tenant_id"] = run_tenant_id
     results["dataset"] = str(dataset_path)
     results["elapsed_seconds"] = round(time.time() - started, 3)
@@ -90,6 +106,10 @@ def run_benchmark(
     records: list[dict[str, Any]],
     *,
     run_tenant_id: str,
+    stop_after: int | None = None,
+    sleep_seconds: float = 0.0,
+    checkpoint_path: Path | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "benchmark": "LongMemEval-style retrieval",
@@ -101,17 +121,33 @@ def run_benchmark(
         "by_type": defaultdict(lambda: {"total": 0, "hits": defaultdict(int)}),
         "failures": [],
     }
+    completed_question_ids: set[str] = set()
+    if resume and checkpoint_path:
+        completed_question_ids = load_checkpoint(checkpoint_path, metrics)
 
     for index, record in enumerate(records, start=1):
         try:
             item = normalize_record(record)
         except ValueError as exc:
             metrics["skipped_invalid"] += 1
-            metrics["failures"].append({"index": index, "error": str(exc)})
+            failure = {"index": index, "error": str(exc)}
+            metrics["failures"].append(failure)
+            write_checkpoint(checkpoint_path, {"status": "invalid", **failure})
+            continue
+
+        if item["question_id"] in completed_question_ids:
             continue
 
         if not item["gold_session_ids"]:
             metrics["skipped_abstention"] += 1
+            write_checkpoint(
+                checkpoint_path,
+                {
+                    "status": "abstention",
+                    "question_id": item["question_id"],
+                    "question_type": item["question_type"],
+                },
+            )
             continue
 
         question_tenant_id = f"{run_tenant_id}-{item['question_id']}"
@@ -144,12 +180,28 @@ def run_benchmark(
 
         metrics["total"] += 1
         metrics["by_type"][item["question_type"]]["total"] += 1
+        hits: dict[str, bool] = {}
         gold = set(item["gold_session_ids"])
         for top_k in TOP_K_VALUES:
+            key = f"recall@{top_k}"
             if set(ranked_session_ids[:top_k]) & gold:
-                key = f"recall@{top_k}"
                 metrics["recall_at_k"][key] += 1
                 metrics["by_type"][item["question_type"]]["hits"][key] += 1
+                hits[key] = True
+            else:
+                hits[key] = False
+
+        write_checkpoint(
+            checkpoint_path,
+            {
+                "status": "scored",
+                "question_id": item["question_id"],
+                "question_type": item["question_type"],
+                "gold_session_ids": item["gold_session_ids"],
+                "ranked_session_ids": ranked_session_ids[: max(TOP_K_VALUES)],
+                "hits": hits,
+            },
+        )
 
         if index % 10 == 0:
             total = metrics["total"]
@@ -158,6 +210,11 @@ def run_benchmark(
 
         if os.environ.get("JKG_BENCHMARK_CLEANUP_EACH_QUESTION") == "1":
             cleanup_tenant(memory)
+
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        if stop_after is not None and metrics["total"] >= stop_after:
+            break
 
     metrics["recall_at_k"] = dict(metrics["recall_at_k"])
     metrics["by_type"] = {
@@ -168,6 +225,42 @@ def run_benchmark(
         for question_type, values in metrics["by_type"].items()
     }
     return metrics
+
+
+def load_checkpoint(path: Path, metrics: dict[str, Any]) -> set[str]:
+    completed: set[str] = set()
+    if not path.exists():
+        return completed
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        status = entry.get("status")
+        question_id = entry.get("question_id")
+        if question_id:
+            completed.add(str(question_id))
+        if status == "scored":
+            question_type = str(entry["question_type"])
+            metrics["total"] += 1
+            metrics["by_type"][question_type]["total"] += 1
+            for key, hit in entry.get("hits", {}).items():
+                if hit:
+                    metrics["recall_at_k"][key] += 1
+                    metrics["by_type"][question_type]["hits"][key] += 1
+        elif status == "abstention":
+            metrics["skipped_abstention"] += 1
+        elif status == "invalid":
+            metrics["skipped_invalid"] += 1
+            metrics["failures"].append(entry)
+    return completed
+
+
+def write_checkpoint(path: Path | None, entry: dict[str, Any]) -> None:
+    if not path:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
