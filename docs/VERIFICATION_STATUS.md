@@ -32,6 +32,11 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Initial per-item embedding run: 21.089 seconds.
   - Batch Gemini embedding run: 2.106 seconds.
   - Latest artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch-smoke.json`.
+- Remote LongMemEval-S bounded run:
+  - Scored questions: 5.
+  - Result: recall@1/3/5/10/20 = 0.8.
+  - Elapsed: 11.061 seconds.
+  - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch5.json`.
 - Local MCP stdio handshake:
   - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
   - Runs initialize, list tools, and `jkg_health`.

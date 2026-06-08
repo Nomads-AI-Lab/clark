@@ -20,3 +20,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added verification status for real provider, Docker, Postgres, and LongMemEval-S smoke runs.
 - Added a real MCP stdio client handshake test.
 - Added batch Gemini embeddings and Postgres bulk inserts for benchmark ingestion.
+- Recorded a 5-question real LongMemEval-S bounded benchmark run.
