@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 
 DB_PATH = os.path.expanduser(os.environ.get(
     "JKG_DB_PATH",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_v3.db")
+    os.path.join("~", ".jkg", "memory_v3.db")
 ))
 # Default: local SentenceTransformer (384-dim). Set GEMINI_API_KEY for Gemini (768-dim).
 _USE_GEMINI = bool(os.environ.get("GEMINI_API_KEY", ""))
@@ -24,23 +24,15 @@ EMBEDDING_MODEL = os.environ.get(
 )
 
 def _load_env():
-    """Load .env from current dir, ~/.jkg/, or JKG_ENV_PATH."""
-    env_paths = [
-        os.environ.get("JKG_ENV_PATH", ""),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"),
-        os.path.expanduser("~/.jkg/.env"),
-        os.path.expanduser("~/.hermes/.env"),
-        ".env",
-    ]
-    for env_path in env_paths:
-        if env_path and os.path.exists(env_path):
-            with open(env_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        k, _, v = line.partition("=")
-                        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-            break
+    """Load an explicit env file when JKG_ENV_PATH is set."""
+    env_path = os.environ.get("JKG_ENV_PATH", "")
+    if env_path and os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 _load_env()
 
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -274,20 +266,20 @@ class HybridMemory:
         # Gemini API path
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            print("WARNING: GEMINI_API_KEY not set. Returning zero vectors.", file=sys.stderr)
-            dim = EMBEDDING_DIM
-            if isinstance(texts, str):
-                return _np.zeros(dim, dtype=_np.float32)
-            return [_np.zeros(dim, dtype=_np.float32) for _ in texts]
+            raise RuntimeError("GEMINI_API_KEY is required for Gemini embeddings")
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
         
         def _call_gemini(text):
             payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
-            resp = _requests.post(url, json=payload, timeout=30).json()
+            resp = _requests.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=30,
+            ).json()
             if "embedding" not in resp:
-                print(f"Error from Gemini API: {resp}", file=sys.stderr)
-                return _np.zeros(EMBEDDING_DIM, dtype=_np.float32)
+                raise RuntimeError(f"Gemini embedding request failed: {resp}")
             vals = resp["embedding"]["values"]
             dim = EMBEDDING_DIM
             if len(vals) > dim:
