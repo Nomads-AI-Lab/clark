@@ -41,6 +41,9 @@ server = [
     "fastapi>=0.128,<1",
     "uvicorn[standard]>=0.38,<1",
 ]
+mcp = [
+    "mcp>=1.23,<2",
+]
 
 [project.scripts]
 jkg = "jkg.cli:main"

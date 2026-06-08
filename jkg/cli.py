@@ -26,6 +26,16 @@ def main(argv: list[str] | None = None) -> None:
         uvicorn.run("jkg.server:app", host=host, port=port)
         return
 
+    if args[:1] == ["mcp"]:
+        try:
+            from .mcp_server import main as mcp_main
+        except ImportError as exc:
+            raise SystemExit("Install MCP dependencies with: pip install 'jkg[mcp]'") from exc
+
+        transport = args[1] if len(args) > 1 else "stdio"
+        mcp_main(transport=transport)
+        return
+
     sys.argv = [old_argv[0] if old_argv else "jkg", *args]
     try:
         runpy.run_module("jkg.memory", run_name="__main__")
