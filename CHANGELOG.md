@@ -27,3 +27,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added partial LongMemEval-S artifact preservation for Gemini quota failures.
 - Recorded the slow background LongMemEval-S resume job and checkpoint status.
 - Added Gemini timeout retry controls and resumed the full LongMemEval-S job.
+- Recorded the completed 500-question LongMemEval-S JKG benchmark result.

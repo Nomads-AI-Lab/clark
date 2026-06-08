@@ -38,10 +38,13 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Elapsed: 11.061 seconds.
   - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch5.json`.
 - Remote LongMemEval-S full run attempt:
-  - Full 500-question run reached 31 scored questions before Gemini returned `429 quota exceeded`.
+  - Full 500-question run completed after checkpoint/resume and slower request pacing.
   - Checkpoint: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full.checkpoint.jsonl`.
-  - Partial artifact: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-partial.json`.
-  - Partial result from checkpoint: recall@1 = 27/31, recall@3/5/10/20 = 29/31.
+  - Final artifact: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-resume-slow-timeout.json`.
+  - Dataset: `/opt/jkg-bench-data/longmemeval_s_cleaned.json`.
+  - Scored: 500/500, skipped abstention: 0, skipped invalid: 0.
+  - Result: recall@1 = 446/500, recall@3 = 486/500, recall@5 = 493/500, recall@10 = 497/500, recall@20 = 498/500.
+  - Elapsed: 4963.962 seconds.
   - Resume support, checkpoint summary, and Gemini retry/backoff are implemented.
 - Remote provider comparison:
   - Providers: JKG Postgres/pgvector and Mem0 OSS.
@@ -61,16 +64,8 @@ This file tracks real verification runs for the production-readiness branch. It 
 ## Not Yet Fully Verified
 
 - Full LongMemEval-S run across all 500 questions.
-  - Batch embedding, checkpoint/resume, and retry/backoff are implemented.
-  - The current Gemini API key hit quota at 31 scored questions in the first full attempt.
-  - A slower resume with `--sleep-seconds 10` is running in the background on the test server.
-  - Background PID: `2129392`.
-  - The first slow resume reached 103/500 before a Gemini read timeout.
-  - Gemini network timeout retry and `JKG_GEMINI_TIMEOUT_SECONDS` are now implemented.
-  - Current background PID after timeout fix: `2143546`.
-  - Current checkpoint at last inspection: 116/500 scored, recall@1 = 105/116, recall@3 = 111/116, recall@5 = 113/116, recall@10/20 = 114/116.
-  - Checkpoint path: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full.checkpoint.jsonl`.
-  - Final artifact path when complete: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-resume-slow.json`.
+  - Completed.
+  - Remaining work is broader provider comparison, not JKG full-run completion.
 - Competitive benchmark runs against top memory providers.
   - Requires installing and configuring those providers in the same environment.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.

@@ -43,6 +43,20 @@ uv run python benchmark/run_longmemeval.py \
 
 If the provider returns quota errors, the runner writes a partial artifact from the checkpoint and exits non-zero.
 
+## Verified JKG Result
+
+Remote full run on `82.38.4.10`:
+
+- Dataset: `/opt/jkg-bench-data/longmemeval_s_cleaned.json`
+- Artifact: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-resume-slow-timeout.json`
+- Scored questions: 500/500
+- Recall@1: 446/500 = 0.892
+- Recall@3: 486/500 = 0.972
+- Recall@5: 493/500 = 0.986
+- Recall@10: 497/500 = 0.994
+- Recall@20: 498/500 = 0.996
+- Elapsed: 4963.962 seconds
+
 ## Required Before Public Claims
 
 - Publish the dataset version and preprocessing steps.
