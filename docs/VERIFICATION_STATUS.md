@@ -38,10 +38,11 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Elapsed: 11.061 seconds.
   - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch5.json`.
 - Remote LongMemEval-S full run attempt:
-  - Full 500-question run reached 18 scored questions before the first run stopped.
+  - Full 500-question run reached 31 scored questions before Gemini returned `429 quota exceeded`.
   - Checkpoint: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full.checkpoint.jsonl`.
-  - Partial result from checkpoint: recall@1 = 14/18, recall@3/5/10/20 = 16/18.
-  - Resume support and Gemini retry/backoff are now implemented.
+  - Partial artifact: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-partial.json`.
+  - Partial result from checkpoint: recall@1 = 27/31, recall@3/5/10/20 = 29/31.
+  - Resume support, checkpoint summary, and Gemini retry/backoff are implemented.
 - Remote provider comparison:
   - Providers: JKG Postgres/pgvector and Mem0 OSS.
   - Shared credentials/providers: Gemini embeddings and DeepSeek LLM.
@@ -61,7 +62,8 @@ This file tracks real verification runs for the production-readiness branch. It 
 
 - Full LongMemEval-S run across all 500 questions.
   - Batch embedding, checkpoint/resume, and retry/backoff are implemented.
-  - A resumed full run is in progress on the test server when this status was last updated.
+  - The current Gemini API key hit quota at 31 scored questions.
+  - Continue from the checkpoint after quota reset or with a higher-quota Gemini key.
 - Competitive benchmark runs against top memory providers.
   - Requires installing and configuring those providers in the same environment.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.

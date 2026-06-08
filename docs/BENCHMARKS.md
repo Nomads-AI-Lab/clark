@@ -27,6 +27,22 @@ Outputs are written to `benchmark/results/` unless `--output` is provided.
 
 Use a unique tenant per run. The runner creates one automatically. Add `--cleanup` only when you intentionally want to delete the benchmark tenant rows after saving the result.
 
+For long runs, use checkpoint/resume:
+
+```bash
+GEMINI_API_KEY=... \
+JKG_DATABASE_URL=postgresql://jkg:strong-password@127.0.0.1:5432/jkg \
+uv run python benchmark/run_longmemeval.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --tenant-id remote-longmemeval-full \
+  --checkpoint-jsonl benchmark/results/remote-longmemeval-full.checkpoint.jsonl \
+  --resume \
+  --sleep-seconds 1 \
+  --output benchmark/results/remote-longmemeval-full.json
+```
+
+If the provider returns quota errors, the runner writes a partial artifact from the checkpoint and exits non-zero.
+
 ## Required Before Public Claims
 
 - Publish the dataset version and preprocessing steps.
