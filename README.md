@@ -187,6 +187,7 @@ docker rm -f jkg-pgvector-test
 - [Production readiness roadmap](docs/PRODUCTION_OPEN_SOURCE_PLAN.md)
 - [Agent integrations](docs/INTEGRATIONS.md)
 - [Benchmark methodology](docs/BENCHMARKS.md)
+- [Verification status](docs/VERIFICATION_STATUS.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)

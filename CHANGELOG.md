@@ -17,3 +17,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added production readiness roadmap and open-source contribution documents.
 - Added MCP client configuration templates and Hermes memory provider plugin.
 - Replaced the old benchmark script with a credential-gated Postgres/pgvector runner.
+- Added verification status for real provider, Docker, Postgres, and LongMemEval-S smoke runs.
