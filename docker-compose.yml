@@ -1,4 +1,18 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jkg}
+      POSTGRES_USER: ${POSTGRES_USER:-jkg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jkg-local-dev-password}
+    volumes:
+      - jkg-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jkg} -d ${POSTGRES_DB:-jkg}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   jkg-api:
     build: .
     ports:
@@ -7,11 +21,16 @@ services:
       - .env
     environment:
       JKG_ENV: production
+      JKG_DATABASE_URL: ${JKG_DATABASE_URL:-postgresql://jkg:jkg-local-dev-password@postgres:5432/jkg}
+      JKG_TENANT_ID: ${JKG_TENANT_ID:-default}
       JKG_DB_PATH: /data/memory_v3.db
     volumes:
       - jkg-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   jkg-data:
-
+  jkg-postgres:

@@ -63,3 +63,18 @@ def test_console_entrypoint_doctor_reports_environment(tmp_path):
     assert payload["python"]["ok"] is True
     assert payload["package"]["version"] == "7.0.0"
     assert payload["db_path"]["path"] == str(db_path)
+
+
+def test_console_entrypoint_migrate_without_database_url_reports_sqlite_mode(tmp_path):
+    env = {**os.environ, "JKG_DB_PATH": str(tmp_path / "legacy.db")}
+    env.pop("JKG_DATABASE_URL", None)
+
+    result = subprocess.run(
+        ["jkg", "migrate"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert "legacy SQLite schema initializes on first use" in result.stdout

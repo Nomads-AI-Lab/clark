@@ -48,9 +48,34 @@ def collect_diagnostics() -> dict:
             "model": os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-001"),
         },
     }
+    database_url = os.environ.get("JKG_DATABASE_URL")
+    if database_url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(database_url, row_factory=dict_row) as conn:
+                postgres_version = conn.execute("SHOW server_version").fetchone()["server_version"]
+                pgvector = conn.execute(
+                    "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+                ).fetchone()
+            checks["postgres"] = {
+                "ok": pgvector is not None,
+                "configured": True,
+                "postgres_version": postgres_version,
+                "pgvector_version": pgvector["extversion"] if pgvector else None,
+            }
+        except Exception as exc:
+            checks["postgres"] = {
+                "ok": False,
+                "configured": True,
+                "error": str(exc),
+            }
+    else:
+        checks["postgres"] = {"ok": True, "configured": False}
     checks["overall_ok"] = all(
         checks[name]["ok"]
-        for name in ("python", "package", "sqlite", "db_path", "sqlite_vec")
+        for name in ("python", "package", "sqlite", "db_path", "sqlite_vec", "postgres")
     )
     return checks
 
@@ -59,4 +84,3 @@ def main() -> int:
     diagnostics = collect_diagnostics()
     print(json.dumps(diagnostics, indent=2, ensure_ascii=False))
     return 0 if diagnostics["overall_ok"] else 1
-

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+import os
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -14,6 +15,18 @@ def main(argv: list[str] | None = None) -> None:
         from .doctor import main as doctor_main
 
         raise SystemExit(doctor_main())
+
+    if args[:1] == ["migrate"]:
+        if os.environ.get("JKG_DATABASE_URL"):
+            from .db import migrate_postgres
+
+            result = migrate_postgres()
+            import json
+
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
+        print("No JKG_DATABASE_URL set; legacy SQLite schema initializes on first use.")
+        return
 
     if args[:1] == ["serve"]:
         try:

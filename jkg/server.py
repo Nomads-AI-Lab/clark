@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from .db import PostgresMemory
 from .doctor import collect_diagnostics
 from .memory import HybridMemory
 
@@ -38,7 +39,9 @@ def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
 
-def get_memory() -> HybridMemory:
+def get_memory() -> Any:
+    if os.environ.get("JKG_DATABASE_URL"):
+        return PostgresMemory.from_env()
     return HybridMemory()
 
 
@@ -56,16 +59,15 @@ def readyz() -> dict:
 
 
 @app.get("/v1/stats", dependencies=[Depends(require_auth)])
-def stats(memory: HybridMemory = Depends(get_memory)) -> dict:
+def stats(memory: Any = Depends(get_memory)) -> dict:
     return memory.stats()
 
 
 @app.post("/v1/query", dependencies=[Depends(require_auth)])
-def query(request: QueryRequest, memory: HybridMemory = Depends(get_memory)) -> dict:
+def query(request: QueryRequest, memory: Any = Depends(get_memory)) -> dict:
     return memory.query(request.text, layers=request.layers, limit=request.limit)
 
 
 @app.post("/v1/memories", dependencies=[Depends(require_auth)])
-def remember(request: MemoryRequest, memory: HybridMemory = Depends(get_memory)) -> dict:
+def remember(request: MemoryRequest, memory: Any = Depends(get_memory)) -> dict:
     return memory.remember(request.text, source=request.source)
-
