@@ -1,310 +1,195 @@
-# 🧠 Jessica Knowledge Graph 7.0
+# Jessica Knowledge Graph
 
-> **Unified Memory Fabric — four-layer AI memory in a single SQLite transaction.**
-> Profile. Factual knowledge. Episodic sessions. Procedural skills. All fused by CLARK.
-> Local-first SQLite architecture with optional Gemini embeddings via `GEMINI_API_KEY`.
+Jessica Knowledge Graph (JKG) is a memory layer for personal agents. It stores profile, factual, episodic, and procedural memory behind one query surface, so tools such as Hermes, Codex, Claude Code, Gemini CLI, Cursor, and MCP-compatible agents can retrieve useful context without stitching several memory systems together.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![LongMemEval](https://img.shields.io/badge/LongMemEval--S-96.8%25%20R@5-green.svg)](https://arxiv.org/abs/2410.10813)
-[![Lines](https://img.shields.io/badge/code-2622%20lines-purple.svg)](jkg/memory.py)
+The repository is being hardened for open-source production use. The current production path is:
 
----
+- Postgres 16 with `pgvector` for server deployments.
+- SQLite plus `sqlite-vec` for local development and single-user experiments.
+- DeepSeek for LLM extraction by default.
+- Gemini embeddings by default.
+- FastAPI HTTP API with bearer-token auth.
+- MCP server for agent-native integration.
+- `uv` for local development and CI-style commands.
 
-## The Problem
+## Status
 
-Every AI agent has **fragmented memory**. User preferences sit in one system. Factual knowledge in another. Session transcripts in a third. Skills in flat files. They don't talk to each other — and every retrieval means manually stitching together four separate queries.
+JKG is usable, but not ready for strong public benchmark claims yet. Before publishing comparative numbers, run the real benchmark suite against the intended provider credentials and datasets. Do not rely on older README benchmark tables from previous drafts.
 
-## What JKG 7.0 Is
-
-**One database. Four memory layers. One query.**
-
-```
-┌─────────────────────────────────────────────────────┐
-│                 unified query("...")                │
-│          CLARK fusion across all layers             │
-└──────────┬──────────┬──────────┬───────────────────┘
-           │          │          │
-     ┌─────▼──┐ ┌─────▼──┐ ┌─────▼─────┐ ┌──────────▼──┐
-     │PROFILE │ │FACTUAL │ │ EPISODIC  │ │ PROCEDURAL   │
-     │        │ │        │ │           │ │              │
-     │Who am  │ │What do │ │What did   │ │How do I     │
-     │I? What │ │I know? │ │we discuss │ │do X?        │
-     │do I    │ │Entities │ │in past    │ │Skills +     │
-     │like?   │ │+ facts  │ │sessions?  │ │workflows    │
-     │        │ │+ graph  │ │           │ │              │
-     └────────┘ └────────┘ └───────────┘ └──────────────┘
-```
-
-### Four Layers, One SQLite Database
-
-| Layer | Table | Purpose | Example |
-|-------|-------|---------|---------|
-| **Profile** | `memory_profile` | Identity, preferences, environment | `communication_style: warm but fast` |
-| **Factual** | `facts` + `entities` + `relations` | Knowledge graph with temporal validity | `alice works_at acme [2023→now]` |
-| **Episodic** | `memory_sessions` | Session transcripts + auto-summaries | `May 15: discussed memory architecture` |
-| **Procedural** | `memory_skills` | Skills with trigger conditions | `response-formatting: triggered by "format"` |
-
----
-
-## Why JKG 7.0
-
-Most AI memory systems keep components in separate databases. Graph in Neo4j. Vectors in pgvector. Sessions in another store. **State drift is inevitable** — the graph says one thing, embeddings say another.
-
-JKG 7.0 runs **everything in one SQLite transaction**: graph, embeddings, temporal validity, emotional context, intentional forgetting, self-evolving schema, profile preferences, session transcripts, and skill indexes. **No drift. No orphans. No external APIs for recall.**
-
-| Feature | Mem0 | Cognee | Zep | Letta | **JKG 7.0** |
-|---------|:----:|:------:|:---:|:-----:|:-----------:|
-| Four memory layers | ❌ 2 | ❌ 2 | ❌ 3 | ❌ 2 | ✅ |
-| Unified cross-layer query | ❌ | ❌ | ❌ | ❌ | ✅ CLARK |
-| Graph + Embeddings, one DB | — | — | — | — | ✅ |
-| Dynamic session context injection | ❌ | ❌ | ❌ | ⚠️ | ✅ |
-| Auto-sync bridges | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Bi-temporal validity (T+T') | — | — | ✅ | — | ✅ |
-| Emotional context | — | — | — | — | ✅ |
-| Intentional forgetting (utility) | — | — | — | — | ✅ |
-| Self-evolving schema | — | — | — | — | ✅ |
-| GDPR true deletion + audit trail | — | — | — | — | ✅ |
-| CLARK retrieval (Value Iteration + A*) | — | — | — | — | ✅ |
-| Fully local (no cloud for recall) | — | — | — | — | ✅ |
-
----
-
-## Quick Start
+## Install
 
 ```bash
 git clone https://github.com/altyshalu/jessica-knowledge-graph.git
 cd jessica-knowledge-graph
-pip install -e .
+uv sync --extra test --extra server --extra mcp --extra postgres
 ```
 
-### Embeddings setup
+For local editable development:
 
 ```bash
-# Optional but recommended for semantic retrieval quality
-export GEMINI_API_KEY=your_key_here
+uv pip install -e ".[test,server,mcp,postgres]"
 ```
 
-If `GEMINI_API_KEY` is not set, JKG still runs but falls back to zero vectors, which degrades semantic retrieval quality.
+## Configuration
 
-### Your First Memory
+Create `.env` from `.env.example` and set real credentials:
 
 ```bash
-# Remember a fact (factual layer)
-python3 -m jkg.memory remember "Alice is a software engineer at Acme Corp since 2023"
-
-# Remember a user preference (profile layer)
-python3 -m jkg.memory remember-profile "Alice prefers concise, no-fluff answers"
-
-# Index a session transcript (episodic layer)
-python3 -m jkg.memory remember-session "session-001" "Discussed Q3 roadmap and memory architecture"
-
-# Index a skill (procedural layer)
-python3 -m jkg.memory index-skill "code-review" "Reviews PRs for security, performance, and style"
-
-# Query across ALL layers at once
-python3 -m jkg.memory query "what does Alice prefer?"
-
-# Get dynamic session-start context (replaces flat prompt injection)
-python3 -m jkg.memory session-start
+cp .env.example .env
 ```
 
-### Python API
+Required for production server mode:
+
+```bash
+JKG_ENV=production
+JKG_AUTH_TOKEN=replace-with-a-long-random-token
+JKG_DATABASE_URL=postgresql://jkg:strong-password@postgres:5432/jkg
+GEMINI_API_KEY=...
+DEEPSEEK_API_KEY=...
+```
+
+Important behavior:
+
+- JKG does not silently replace missing providers with fake embeddings or fake LLM output.
+- If a required provider key is absent for the code path you run, the operation fails explicitly.
+- Server production mode requires `JKG_AUTH_TOKEN`.
+
+## CLI
+
+```bash
+uv run jkg doctor
+uv run jkg migrate
+uv run jkg stats
+uv run jkg remember "Alice prefers concise technical answers"
+uv run jkg query "How should I answer Alice?"
+uv run jkg session-start
+```
+
+`jkg migrate` applies the Postgres/pgvector schema when `JKG_DATABASE_URL` is set. Without `JKG_DATABASE_URL`, the legacy SQLite schema initializes on first use.
+
+## Docker
+
+```bash
+cp .env.example .env
+# edit .env and set strong real values
+docker compose up --build
+```
+
+Then migrate the database:
+
+```bash
+docker compose exec jkg-api jkg migrate
+```
+
+Health and API smoke:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+curl -H "Authorization: Bearer $JKG_AUTH_TOKEN" http://127.0.0.1:8000/v1/stats
+```
+
+## HTTP API
+
+```bash
+uv run jkg serve 8000
+```
+
+Endpoints:
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /v1/stats`
+- `POST /v1/memories`
+- `POST /v1/query`
+
+Authenticated request:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/memories \
+  -H "Authorization: Bearer $JKG_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Alice is building a production memory layer","source":"api"}'
+```
+
+## MCP
+
+Run a stdio MCP server:
+
+```bash
+uv run jkg mcp
+```
+
+Run streamable HTTP transport:
+
+```bash
+uv run jkg mcp streamable-http
+```
+
+Available tools:
+
+- `jkg_health`
+- `jkg_stats`
+- `jkg_query`
+- `jkg_remember`
+
+Resource:
+
+- `jkg://stats`
+
+When `JKG_DATABASE_URL` is set, MCP uses the Postgres backend. Otherwise it uses the local SQLite backend.
+
+## Python API
 
 ```python
 from jkg import HybridMemory
 
-hm = HybridMemory()
-
-# ── Ingest ──────────────────────────────
-hm.remember("Alice works at Acme")                # factual
-hm.remember_profile("Alice prefers fast replies")  # profile
-hm.remember_session("sess-001", "transcript...")  # episodic
-hm.index_skill("my-skill", description="...", triggers=["when ..."])  # procedural
-
-# ── Unified Query ───────────────────────
-# One call, all layers, CLARK-ranked
-result = hm.query("how does Alice communicate?")
-for r in result["results"]:
-    print(f"[{r['layer']}] score={r['score']:.2f} — {r}")
-# [profile]  score=0.92 — key: communication_style, value: fast
-# [factual]  score=0.87 — alice prefers быстрые ответы
-# [episodic] score=0.72 — Session May 12: "don't call me bestie"
-
-# ── Session Context ─────────────────────
-context = hm.session_start_context()
-# DYNAMIC CONTEXT (JKG 7.0)
-# [Profile] communication_style: fast...
-# [Active Facts] alice works_at acme...
-# [Recent Episodes] 🎯 May 15: discussed architecture...
-# [Relevant Skills] code-review, response-formatting...
+memory = HybridMemory()
+memory.remember("Alice works on agent memory infrastructure")
+result = memory.query("What does Alice work on?")
+print(result["results"])
 ```
 
----
+For production server deployments, prefer the HTTP API or MCP server over importing the legacy SQLite class directly.
 
-## Architecture
+## Tests
 
-### CLARK Retrieval (bio-inspired)
-
-Inspired by the **Clark's Nutcracker** (*Nucifraga columbiana*) — a bird with the best long-term spatial memory in the animal kingdom (30,000+ seed caches, 9+ month retrieval window).
-
-**Three stages:**
-
-1. **Value Iteration** — elastic adaptation (like seasonal hippocampus growth): propagates confidence through the graph
-2. **A\* Search** — retrieval (like landmark-based navigation): selects top entities by PageRank × confidence, scores with cosine similarity + temporal bonus
-3. **Confidence Update** — self-learning (like neurogenesis): retrieved facts get +0.05 confidence boost, neighbors get +0.017
-
-```
-Value Iteration     A* Search          Confidence Update
-   ┌───┐           ┌──────┐           ┌──────┐
-   │ V │ ────────→ │  A*  │ ────────→ │  +Δ  │
-   └───┘   graph   └──────┘  retrieve └──────┘  learn
-  propagate         landmarks           boost
-```
-
-### Multi-Layer Query Flow
-
-```
-unified_query("how does Alice communicate?")
-  │
-  ├─► Profile Layer:  key/value LIKE search + embedding fallback
-  │    → "communication_style: fast" (score=0.92)
-  │
-  ├─► Factual Layer:  CLARK (Value Iteration → A* → Confidence Update)
-  │    → "alice prefers быстрые ответы" (score=0.87)
-  │
-  ├─► Episodic Layer: full_text LIKE search
-  │    → "Session May 12: don't call me bestie" (score=0.72)
-  │
-  └─► Procedural Layer: name/description/triggers LIKE search
-       → "response-formatting: no tables, emoji..." (score=0.65)
-  │
-  ▼
-CLARK-style fusion: sort by score, return top-N across layers
-```
-
-### Database Schema (21 tables, 1 file)
-
-```
-memory_v3.db
-├── PROFILE        memory_profile     (key, value, category, confidence)
-├── FACTUAL        entities           (id, name, type, summary)
-│                  facts              (subject, predicate, object, temporal, confidence, utility)
-│                  relations          (subject → predicate → object)
-│                  episodes           (uuid, body, emotion)
-│                  facts_fts          (BM25 keyword search)
-│                  facts_vec          (sqlite-vec KNN search)
-├── EPISODIC       memory_sessions    (session_id, full_text, summary, emotion, importance)
-├── PROCEDURAL     memory_skills      (name, description, triggers, version)
-├── EVOLUTION      schema_evolution   (pattern proposals)
-│                  forget_log         (utility-based pruning trail)
-│                  deletion_log       (GDPR audit trail)
-```
-
----
-
-## Benchmarks
-
-**LongMemEval-S** — industry standard for agent memory retrieval ([arXiv:2410.10813](https://arxiv.org/abs/2410.10813))
-
-| System | Recall@5 | Recall@10 | Notes |
-|--------|:--------:|:---------:|-------|
-| **JKG 7.0** | **96.8%** | **100%** | CLARK A* retrieval |
-| MemPalace | 96.6% | — | Graph + LLM rerank |
-| agentmemory | 95.2% | — | Baseline |
-
-*Preliminary on 100/500 questions. Full 500-question run requires GPU (~30 min on CPU). Results saved to `benchmark/longmemeval_jkg_results.json`.*
-
----
-
-## Comparison with Industry (May 2026)
-
-| System | 4 Layers | Unified Query | Dynamic Injection | Sync Bridges | Graph+Emb 1DB | Temporal | Emotional | Forgetting | Self-Evolve | Privacy | $/mo |
-|---------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **JKG 7.0** | ✅ | ✅ CLARK | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | $0 |
-| Graphiti/Zep | ❌ 3 | ❌ | ❌ | ❌ | ❌ Neo4j+PG | ✅ | ❌ | ❌ | ❌ | ❌ | $$ |
-| Cognee | ❌ 2 | ❌ | ❌ | ❌ | ❌ 3 DBs | ❌ | ❌ | ❌ | ❌ | ❌ | $$ |
-| Mem0 | ❌ 2 | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | $$ |
-| Letta/MemGPT | ❌ 2 | ❌ | ⚠️ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ❌ | ❌ | $ |
-
----
-
-## Commands Reference
+Run the local suite:
 
 ```bash
-# ═══ INGEST ═══
-python3 -m jkg.memory remember "text"              # factual layer
-python3 -m jkg.memory remember-profile "pref"       # profile layer
-python3 -m jkg.memory remember-session "id"         # episodic layer
-python3 -m jkg.memory index-skill "name" "desc"     # procedural layer
-
-# ═══ QUERY ═══
-python3 -m jkg.memory query "question?"             # ALL layers
-python3 -m jkg.memory query "q?" --layers profile,factual
-python3 -m jkg.memory clark "query"                 # factual-only CLARK
-python3 -m jkg.memory ask "question?"               # factual Q&A with LLM synthesis
-python3 -m jkg.memory recall "query"                # RRF hybrid (factual)
-
-# ═══ SESSION ═══
-python3 -m jkg.memory session-start                 # dynamic context injection
-python3 -m jkg.memory profile                       # view profile facts
-python3 -m jkg.memory sessions "keyword"            # search sessions
-
-# ═══ MAINTENANCE ═══
-python3 -m jkg.memory stats                         # full statistics
-python3 -m jkg.memory propagate                     # Value Iteration (CLARK stage 1)
-python3 -m jkg.memory utility                       # recalculate memory utility scores
-python3 -m jkg.memory prune 0.15                    # forget low-utility facts (dry-run)
-python3 -m jkg.memory prune 0.15 --execute          # actually forget
-python3 -m jkg.memory evolve                        # propose new entity/relation types
-python3 -m jkg.memory gdpr-delete "name" --confirm  # full GDPR deletion
-
-# ═══ GRAPH TRAVERSAL ═══
-python3 -m jkg.memory traverse "alice" 3            # BFS from entity, depth 3
-python3 -m jkg.memory path "alice" "acme"           # find path between entities
-python3 -m jkg.memory resolve "alic"                # fuzzy entity resolution
-python3 -m jkg.memory bridge both                   # graph↔embeddings bridge
-python3 -m jkg.memory emotions                      # emotional context summary
+uv run pytest
 ```
 
----
-
-## Installation
+Run real provider contract tests:
 
 ```bash
-# Clone
-git clone https://github.com/altyshalu/jessica-knowledge-graph.git
-cd jessica-knowledge-graph
-
-# Install
-pip install -e .
-
-# Dependencies
-pip install sentence-transformers scipy numpy requests sqlite-vec
+GEMINI_API_KEY=... DEEPSEEK_API_KEY=... uv run pytest tests/test_provider_contracts.py
 ```
 
-**Requirements:** Python 3.10+, SQLite 3.40+, [sqlite-vec](https://github.com/asg017/sqlite-vec)
+Run real Postgres/pgvector integration tests:
 
-LLM extraction uses DeepSeek API by default (set `DEEPSEEK_API_KEY` in `.env`). Pluggable — any OpenAI-compatible endpoint works.
+```bash
+docker run --rm -d --name jkg-pgvector-test \
+  -p 15434:5432 \
+  -e POSTGRES_DB=jkg \
+  -e POSTGRES_USER=jkg \
+  -e POSTGRES_PASSWORD=jkg-local-dev-password \
+  pgvector/pgvector:pg16
 
----
+JKG_DATABASE_URL=postgresql://jkg:jkg-local-dev-password@127.0.0.1:15434/jkg \
+GEMINI_API_KEY=... \
+uv run pytest tests/test_postgres_backend.py
 
-## Papers & Inspiration
+docker rm -f jkg-pgvector-test
+```
 
-- [Clark's Nutcracker spatial memory](https://en.wikipedia.org/wiki/Clark%27s_nutcracker) — bio-inspiration for CLARK retrieval
-- [Zep/Graphiti: Temporal Knowledge Graphs for Agentic Apps](https://arxiv.org/abs/2501.13956) — bi-temporal model
-- [LongMemEval: Benchmarking Long-Context LLMs on Memory Tasks](https://arxiv.org/abs/2410.10813) — eval framework
-- [MemGPT: Towards LLMs as Operating Systems](https://arxiv.org/abs/2310.08560) — agent memory architecture
-- [Cognee: Scalable GraphRAG for AI Agents](https://www.cognee.ai/) — multi-database graph memory
+## Open-Source Documents
 
----
+- [Production readiness roadmap](docs/PRODUCTION_OPEN_SOURCE_PLAN.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [MIT License](LICENSE)
 
-## License
+## Security
 
-MIT © Jessica (Altynai's AI assistant)
-
----
-
-<p align="center">
-  <i>One database. Four layers. Zero drift.</i>
-</p>
+Do not expose the HTTP API without `JKG_AUTH_TOKEN`. Do not commit `.env`, database dumps, provider keys, or personal memory exports. Treat memory contents as sensitive user data.

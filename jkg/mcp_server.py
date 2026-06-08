@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 
+from .db import PostgresMemory
 from .doctor import collect_diagnostics
 from .memory import HybridMemory
 
@@ -11,7 +15,9 @@ from .memory import HybridMemory
 mcp = FastMCP("jkg", json_response=True)
 
 
-def _memory() -> HybridMemory:
+def _memory() -> Any:
+    if os.environ.get("JKG_DATABASE_URL"):
+        return PostgresMemory.from_env()
     return HybridMemory()
 
 
@@ -49,4 +55,3 @@ def main(transport: str = "stdio") -> None:
     if transport not in {"stdio", "streamable-http"}:
         raise ValueError("transport must be 'stdio' or 'streamable-http'")
     mcp.run(transport=transport)
-
