@@ -37,6 +37,18 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Result: recall@1/3/5/10/20 = 0.8.
   - Elapsed: 11.061 seconds.
   - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch5.json`.
+- Remote LongMemEval-S full run attempt:
+  - Full 500-question run reached 18 scored questions before the first run stopped.
+  - Checkpoint: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full.checkpoint.jsonl`.
+  - Partial result from checkpoint: recall@1 = 14/18, recall@3/5/10/20 = 16/18.
+  - Resume support and Gemini retry/backoff are now implemented.
+- Remote provider comparison:
+  - Providers: JKG Postgres/pgvector and Mem0 OSS.
+  - Shared credentials/providers: Gemini embeddings and DeepSeek LLM.
+  - Dataset slice: first real LongMemEval-S question.
+  - Result: both providers recall@1/3/5/10/20 = 1.0.
+  - Elapsed: JKG 2.341 seconds, Mem0 260.276 seconds.
+  - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/provider-comparison-jkg-mem0-q1.json`.
 - Local MCP stdio handshake:
   - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
   - Runs initialize, list tools, and `jkg_health`.
@@ -48,7 +60,8 @@ This file tracks real verification runs for the production-readiness branch. It 
 ## Not Yet Fully Verified
 
 - Full LongMemEval-S run across all 500 questions.
-  - Batch embedding is implemented, but the full run still needs cost/progress controls and a deliberate run window.
+  - Batch embedding, checkpoint/resume, and retry/backoff are implemented.
+  - A resumed full run is in progress on the test server when this status was last updated.
 - Competitive benchmark runs against top memory providers.
   - Requires installing and configuring those providers in the same environment.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.

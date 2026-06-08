@@ -23,3 +23,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Recorded a 5-question real LongMemEval-S bounded benchmark run.
 - Added bearer-authenticated MCP Streamable HTTP server and tests.
 - Added a real provider comparison runner for JKG and Mem0 OSS.
+- Recorded the first real JKG-vs-Mem0 LongMemEval-S comparison result.
