@@ -46,3 +46,6 @@ include = ["jkg*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "provider: real external provider contract tests",
+]
