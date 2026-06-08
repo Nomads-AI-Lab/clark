@@ -7,10 +7,6 @@ import os, sys, json, sqlite3, re, hashlib, math, time, heapq
 from datetime import datetime
 from collections import defaultdict, deque
 
-import requests
-import numpy as np
-from sentence_transformers import SentenceTransformer
-
 # ═══════════════════════════════════════════════════
 # CONFIG
 # ═══════════════════════════════════════════════════
@@ -51,6 +47,8 @@ API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 API_BASE = "https://api.deepseek.com"
 
 def _llm(prompt: str, system: str = "You are a precise knowledge extraction engine.") -> str:
+    import requests
+
     r = requests.post(
         f"{API_BASE}/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -260,6 +258,7 @@ class HybridMemory:
             if _USE_GEMINI:
                 self._embedder = self  # Gemini — use self.encode()
             else:
+                from sentence_transformers import SentenceTransformer
                 self._embedder = SentenceTransformer(self._embedder_name)
         return self._embedder
         
@@ -268,8 +267,8 @@ class HybridMemory:
         import requests as _requests
         import numpy as _np
         
-        # If we're a SentenceTransformer instance (set by embedder property)
-        if isinstance(self._embedder, SentenceTransformer):
+        # If we're a SentenceTransformer-like instance (set by embedder property)
+        if self._embedder is not None and self._embedder is not self:
             return self._embedder.encode(texts, normalize_embeddings=True, **kwargs)
         
         # Gemini API path
@@ -1848,6 +1847,7 @@ JSON:"""
             }
         
         # ── A* Search starting from each landmark ──
+        import numpy as np
         from scipy.spatial.distance import cosine as cos_dist
         
         candidates = []  # (score, fact_data)
@@ -2581,6 +2581,7 @@ JSON:"""
                 and not any(term in norm_q for term in ["where", "live", "lived", "moved", "location", "где", "живет", "жил", "переех", "recipe", "pie", "рецепт", "пирог"])
             ):
                 try:
+                    import numpy as np
                     all_profile = self.conn.execute(
                         "SELECT key, value, category, confidence, source FROM memory_profile WHERE is_active=1"
                     ).fetchall()
