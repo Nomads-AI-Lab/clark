@@ -61,15 +61,24 @@ def main() -> int:
 
     started = time.time()
     checkpoint_path = Path(args.checkpoint_jsonl) if args.checkpoint_jsonl else None
-    results = run_benchmark(
-        memory,
-        records,
-        run_tenant_id=run_tenant_id,
-        stop_after=args.stop_after,
-        sleep_seconds=args.sleep_seconds,
-        checkpoint_path=checkpoint_path,
-        resume=args.resume,
-    )
+    try:
+        results = run_benchmark(
+            memory,
+            records,
+            run_tenant_id=run_tenant_id,
+            stop_after=args.stop_after,
+            sleep_seconds=args.sleep_seconds,
+            checkpoint_path=checkpoint_path,
+            resume=args.resume,
+        )
+        results["status"] = "completed"
+    except Exception as exc:
+        if not checkpoint_path:
+            raise
+        results = metrics_from_checkpoint(checkpoint_path)
+        results["status"] = "failed"
+        results["error"] = str(exc)
+        results["error_type"] = type(exc).__name__
     results["tenant_id"] = run_tenant_id
     results["dataset"] = str(dataset_path)
     results["elapsed_seconds"] = round(time.time() - started, 3)
@@ -81,6 +90,8 @@ def main() -> int:
 
     print_report(results)
     print(f"\nSaved results to {output_path}")
+    if results.get("status") == "failed":
+        raise SystemExit(1)
 
     if args.cleanup:
         cleanup_run_tenants(memory, run_tenant_id)
@@ -253,6 +264,33 @@ def load_checkpoint(path: Path, metrics: dict[str, Any]) -> set[str]:
             metrics["skipped_invalid"] += 1
             metrics["failures"].append(entry)
     return completed
+
+
+def metrics_from_checkpoint(path: Path) -> dict[str, Any]:
+    metrics = empty_metrics()
+    load_checkpoint(path, metrics)
+    metrics["recall_at_k"] = dict(metrics["recall_at_k"])
+    metrics["by_type"] = {
+        question_type: {
+            "total": values["total"],
+            "hits": dict(values["hits"]),
+        }
+        for question_type, values in metrics["by_type"].items()
+    }
+    return metrics
+
+
+def empty_metrics() -> dict[str, Any]:
+    return {
+        "benchmark": "LongMemEval-style retrieval",
+        "system": "JKG Postgres pgvector",
+        "total": 0,
+        "skipped_abstention": 0,
+        "skipped_invalid": 0,
+        "recall_at_k": defaultdict(int),
+        "by_type": defaultdict(lambda: {"total": 0, "hits": defaultdict(int)}),
+        "failures": [],
+    }
 
 
 def write_checkpoint(path: Path | None, entry: dict[str, Any]) -> None:
