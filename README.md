@@ -185,6 +185,7 @@ docker rm -f jkg-pgvector-test
 ## Open-Source Documents
 
 - [Production readiness roadmap](docs/PRODUCTION_OPEN_SOURCE_PLAN.md)
+- [Agent integrations](docs/INTEGRATIONS.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)

@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+import json
+import py_compile
+import tomllib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_mcp_json_templates_parse() -> None:
+    for path in [
+        ROOT / "integrations/claude-code/.mcp.json",
+        ROOT / "integrations/cursor/mcp.json",
+        ROOT / "integrations/gemini-cli/settings.json",
+    ]:
+        data = json.loads(path.read_text())
+        assert "jkg" in data["mcpServers"]
+        assert data["mcpServers"]["jkg"]["command"] == "uv"
+
+
+def test_codex_toml_template_parses() -> None:
+    data = tomllib.loads((ROOT / "integrations/codex/config.toml").read_text())
+    assert data["mcp_servers"]["jkg"]["command"] == "uv"
+    assert data["mcp_servers"]["jkg"]["enabled"] is True
+
+
+def test_hermes_plugin_compiles() -> None:
+    py_compile.compile(
+        str(ROOT / "integrations/hermes/jkg/__init__.py"),
+        doraise=True,
+    )

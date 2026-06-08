@@ -15,3 +15,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added MCP server with health, stats, query, and remember tools.
 - Added Postgres/pgvector backend and migration command.
 - Added production readiness roadmap and open-source contribution documents.
+- Added MCP client configuration templates and Hermes memory provider plugin.

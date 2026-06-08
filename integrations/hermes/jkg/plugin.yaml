@@ -1,0 +1,16 @@
+name: jkg
+type: memory_provider
+description: Jessica Knowledge Graph memory provider backed by the JKG HTTP API.
+entrypoint: jkg
+hooks:
+  - initialize
+  - system_prompt_block
+  - prefetch
+  - sync_turn
+  - get_tool_schemas
+  - handle_tool_call
+  - shutdown
+config:
+  required_env:
+    - JKG_API_URL
+    - JKG_AUTH_TOKEN
