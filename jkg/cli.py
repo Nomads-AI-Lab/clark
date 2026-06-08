@@ -46,6 +46,16 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("Install MCP dependencies with: pip install 'jkg[mcp]'") from exc
 
         transport = args[1] if len(args) > 1 else "stdio"
+        if transport == "streamable-http":
+            try:
+                import uvicorn
+            except ImportError as exc:
+                raise SystemExit("Install server dependencies with: pip install 'jkg[server,mcp]'") from exc
+
+            host = os.environ.get("JKG_MCP_HOST", "0.0.0.0")
+            port = int(os.environ.get("JKG_MCP_PORT", args[2] if len(args) > 2 else "8001"))
+            uvicorn.run("jkg.mcp_http:app", host=host, port=port)
+            return
         mcp_main(transport=transport)
         return
 

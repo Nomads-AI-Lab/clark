@@ -40,6 +40,10 @@ This file tracks real verification runs for the production-readiness branch. It 
 - Local MCP stdio handshake:
   - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
   - Runs initialize, list tools, and `jkg_health`.
+- Local authenticated MCP Streamable HTTP:
+  - Starts the real ASGI MCP app through `uvicorn`.
+  - Missing bearer token returns `401` with `WWW-Authenticate: Bearer`.
+  - Authorized official MCP Python SDK streamable HTTP client initializes and lists tools.
 
 ## Not Yet Fully Verified
 
@@ -52,5 +56,6 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Template parsing is covered by tests, but client runtime connection is not.
 - Real Hermes plugin lifecycle inside Hermes.
   - The plugin compiles, but Hermes is not installed on the test server.
-- Remote authenticated MCP over HTTP.
-  - Stdio MCP exists; production remote MCP auth still needs a gateway/OAuth design before public exposure.
+- OAuth 2.1 resource server metadata for public multi-tenant MCP.
+  - Current implementation supports bearer-token authenticated Streamable HTTP.
+  - Public multi-tenant deployments should still front JKG with a proper OAuth gateway.

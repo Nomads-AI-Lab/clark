@@ -27,6 +27,28 @@ Use stdio for local single-user agents. The agent starts the JKG MCP process and
 
 If the client does not support `${env:...}` expansion, put credentials in the shell environment that launches the client.
 
+## MCP Streamable HTTP
+
+Use Streamable HTTP for remote clients and service deployments. Production mode requires a bearer token.
+
+```bash
+JKG_ENV=production \
+JKG_MCP_AUTH_TOKEN=replace-with-a-long-random-token \
+uv run jkg mcp streamable-http 8001
+```
+
+Clients must send this header on every MCP HTTP request:
+
+```text
+Authorization: Bearer <JKG_MCP_AUTH_TOKEN>
+```
+
+The MCP endpoint is:
+
+```text
+http://host:8001/mcp
+```
+
 ## Codex
 
 Codex CLI stores MCP configuration in `~/.codex/config.toml`. You can also add a server with the CLI:
@@ -85,6 +107,7 @@ Minimum local checks:
 ```bash
 uv run jkg doctor
 uv run jkg mcp
+JKG_ENV=production JKG_MCP_AUTH_TOKEN=test-token uv run jkg mcp streamable-http 8001
 ```
 
 Minimum server checks:

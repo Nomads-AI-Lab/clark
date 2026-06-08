@@ -26,7 +26,7 @@ Include:
 - Provider credentials must be supplied through environment variables or secret managers.
 - `.env`, database files, memory exports, and logs containing user data must not be committed.
 - Docker deployments should use strong Postgres passwords, private networks, and TLS at the reverse proxy or platform edge.
-- Public MCP deployments need an authenticated gateway. Stdio MCP is intended for local agent use.
+- Public Streamable HTTP MCP deployments must set `JKG_MCP_AUTH_TOKEN` or `JKG_AUTH_TOKEN`. Stdio MCP is intended for local agent use.
 
 ## Current Limitations
 

@@ -38,3 +38,10 @@ def test_benchmark_runner_compiles() -> None:
         str(ROOT / "benchmark/run_longmemeval.py"),
         doraise=True,
     )
+
+
+def test_mcp_http_app_compiles() -> None:
+    py_compile.compile(
+        str(ROOT / "jkg/mcp_http.py"),
+        doraise=True,
+    )
