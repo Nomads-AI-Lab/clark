@@ -50,11 +50,11 @@ def main() -> int:
 
     migrate_postgres()
     memory = PostgresMemory.from_env()
-    memory.tenant_id = args.tenant_id
+    run_tenant_id = args.tenant_id
 
     started = time.time()
-    results = run_benchmark(memory, records)
-    results["tenant_id"] = args.tenant_id
+    results = run_benchmark(memory, records, run_tenant_id=run_tenant_id)
+    results["tenant_id"] = run_tenant_id
     results["dataset"] = str(dataset_path)
     results["elapsed_seconds"] = round(time.time() - started, 3)
     results["top_k_values"] = TOP_K_VALUES
@@ -67,8 +67,8 @@ def main() -> int:
     print(f"\nSaved results to {output_path}")
 
     if args.cleanup:
-        cleanup_tenant(memory)
-        print(f"Deleted benchmark tenant {args.tenant_id}")
+        cleanup_run_tenants(memory, run_tenant_id)
+        print(f"Deleted benchmark tenants with prefix {run_tenant_id}-")
 
     return 0
 
@@ -85,7 +85,12 @@ def load_dataset(path: Path) -> list[dict[str, Any]]:
     return data
 
 
-def run_benchmark(memory: PostgresMemory, records: list[dict[str, Any]]) -> dict[str, Any]:
+def run_benchmark(
+    memory: PostgresMemory,
+    records: list[dict[str, Any]],
+    *,
+    run_tenant_id: str,
+) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "benchmark": "LongMemEval-style retrieval",
         "system": "JKG Postgres pgvector",
@@ -108,6 +113,9 @@ def run_benchmark(memory: PostgresMemory, records: list[dict[str, Any]]) -> dict
         if not item["gold_session_ids"]:
             metrics["skipped_abstention"] += 1
             continue
+
+        question_tenant_id = f"{run_tenant_id}-{item['question_id']}"
+        memory.tenant_id = question_tenant_id
 
         for session_id, text in item["sessions"]:
             memory.remember(
@@ -141,6 +149,9 @@ def run_benchmark(memory: PostgresMemory, records: list[dict[str, Any]]) -> dict
             total = metrics["total"]
             hits = metrics["recall_at_k"]["recall@5"]
             print(f"[{index}/{len(records)}] recall@5={hits / max(1, total):.3f}")
+
+        if os.environ.get("JKG_BENCHMARK_CLEANUP_EACH_QUESTION") == "1":
+            cleanup_tenant(memory)
 
     metrics["recall_at_k"] = dict(metrics["recall_at_k"])
     metrics["by_type"] = {
@@ -214,6 +225,12 @@ def default_output_path() -> Path:
 def cleanup_tenant(memory: PostgresMemory) -> None:
     with memory._connect() as conn:
         conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id = %s", (memory.tenant_id,))
+        conn.commit()
+
+
+def cleanup_run_tenants(memory: PostgresMemory, run_tenant_id: str) -> None:
+    with memory._connect() as conn:
+        conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id LIKE %s", (f"{run_tenant_id}-%",))
         conn.commit()
 
 
