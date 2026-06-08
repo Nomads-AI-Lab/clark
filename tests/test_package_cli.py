@@ -45,3 +45,21 @@ def test_console_entrypoint_stats_uses_configured_db_path(tmp_path):
     assert payload["episodes"] == 0
     assert db_path.exists()
 
+
+def test_console_entrypoint_doctor_reports_environment(tmp_path):
+    db_path = tmp_path / "doctor.db"
+    env = {**os.environ, "JKG_DB_PATH": str(db_path)}
+
+    result = subprocess.run(
+        ["jkg", "doctor"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["overall_ok"] is True
+    assert payload["python"]["ok"] is True
+    assert payload["package"]["version"] == "7.0.0"
+    assert payload["db_path"]["path"] == str(db_path)
