@@ -15,6 +15,17 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(doctor_main())
 
+    if args[:1] == ["serve"]:
+        try:
+            import uvicorn
+        except ImportError as exc:
+            raise SystemExit("Install server dependencies with: pip install 'jkg[server]'") from exc
+
+        host = "0.0.0.0"
+        port = int(args[1]) if len(args) > 1 else 8000
+        uvicorn.run("jkg.server:app", host=host, port=port)
+        return
+
     sys.argv = [old_argv[0] if old_argv else "jkg", *args]
     try:
         runpy.run_module("jkg.memory", run_name="__main__")

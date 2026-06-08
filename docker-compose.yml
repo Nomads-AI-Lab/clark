@@ -1,0 +1,17 @@
+services:
+  jkg-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      JKG_ENV: production
+      JKG_DB_PATH: /data/memory_v3.db
+    volumes:
+      - jkg-data:/data
+    restart: unless-stopped
+
+volumes:
+  jkg-data:
+

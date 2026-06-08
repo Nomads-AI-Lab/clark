@@ -1,0 +1,71 @@
+"""HTTP API for JKG server deployments."""
+
+from __future__ import annotations
+
+import os
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from .doctor import collect_diagnostics
+from .memory import HybridMemory
+
+
+app = FastAPI(title="Jessica Knowledge Graph", version="7.0.0")
+
+
+class MemoryRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=100_000)
+    source: str = Field(default="api", max_length=128)
+
+
+class QueryRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10_000)
+    layers: list[str] | None = None
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+    token = os.environ.get("JKG_AUTH_TOKEN")
+    if not token:
+        if os.environ.get("JKG_ENV") == "production":
+            raise HTTPException(status_code=503, detail="JKG_AUTH_TOKEN is required in production")
+        return
+
+    expected = f"Bearer {token}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing bearer token")
+
+
+def get_memory() -> HybridMemory:
+    return HybridMemory()
+
+
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> dict:
+    diagnostics = collect_diagnostics()
+    if not diagnostics["overall_ok"]:
+        raise HTTPException(status_code=503, detail=diagnostics)
+    return diagnostics
+
+
+@app.get("/v1/stats", dependencies=[Depends(require_auth)])
+def stats(memory: HybridMemory = Depends(get_memory)) -> dict:
+    return memory.stats()
+
+
+@app.post("/v1/query", dependencies=[Depends(require_auth)])
+def query(request: QueryRequest, memory: HybridMemory = Depends(get_memory)) -> dict:
+    return memory.query(request.text, layers=request.layers, limit=request.limit)
+
+
+@app.post("/v1/memories", dependencies=[Depends(require_auth)])
+def remember(request: MemoryRequest, memory: HybridMemory = Depends(get_memory)) -> dict:
+    return memory.remember(request.text, source=request.source)
+
