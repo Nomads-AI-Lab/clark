@@ -65,7 +65,10 @@ This file tracks real verification runs for the production-readiness branch. It 
   - The current Gemini API key hit quota at 31 scored questions in the first full attempt.
   - A slower resume with `--sleep-seconds 10` is running in the background on the test server.
   - Background PID: `2129392`.
-  - Current checkpoint at last inspection: 91/500 scored, recall@1 = 81/91, recall@3 = 86/91, recall@5 = 88/91, recall@10/20 = 89/91.
+  - The first slow resume reached 103/500 before a Gemini read timeout.
+  - Gemini network timeout retry and `JKG_GEMINI_TIMEOUT_SECONDS` are now implemented.
+  - Current background PID after timeout fix: `2143546`.
+  - Current checkpoint at last inspection: 116/500 scored, recall@1 = 105/116, recall@3 = 111/116, recall@5 = 113/116, recall@10/20 = 114/116.
   - Checkpoint path: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full.checkpoint.jsonl`.
   - Final artifact path when complete: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-full-resume-slow.json`.
 - Competitive benchmark runs against top memory providers.
