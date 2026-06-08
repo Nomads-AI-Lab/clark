@@ -31,3 +31,10 @@ def test_hermes_plugin_compiles() -> None:
         str(ROOT / "integrations/hermes/jkg/__init__.py"),
         doraise=True,
     )
+
+
+def test_benchmark_runner_compiles() -> None:
+    py_compile.compile(
+        str(ROOT / "benchmark/run_longmemeval.py"),
+        doraise=True,
+    )

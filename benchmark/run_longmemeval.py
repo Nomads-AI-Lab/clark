@@ -1,264 +1,233 @@
 #!/usr/bin/env python3
-"""
-JKG LongMemEval Runner
-Tests JKG's hybrid architecture (BM25 + Vector + RRF) against the standard
-LongMemEval-S benchmark.
+"""Run LongMemEval-style retrieval against the real JKG Postgres backend."""
 
-Methodology (faithful to JKG architecture, comparable to agentmemory):
-- Index each haystack SESSION as raw text
-- BM25 search via SQLite FTS5 (same engine as JKG)
-- Vector search via all-MiniLM-L6-v2 (same model as JKG)  
-- RRF fusion (same algorithm as JKG)
-- Metric: recall_any@K — does ANY gold session appear in top-K?
+from __future__ import annotations
 
-Comparison targets:
-- agentmemory BM25+Vector: 95.2% R@5, 98.6% R@10
-- agentmemory BM25-only:   86.2% R@5, 94.6% R@10
-- MemPalace vector-only:   96.6% R@5
-- Zep/Graphiti QA:         71.2% (full QA, not retrieval-only)
-"""
-import json, os, sys, re, sqlite3, hashlib, math, time
+import argparse
+import json
+import os
+import time
+import uuid
 from collections import defaultdict
-import numpy as np
+from pathlib import Path
+from typing import Any
 
-# ── Config ──
-DATASET_PATH = os.path.expanduser("~/.hermes/benchmark/data/longmemeval_s_cleaned.json")
-BENCH_DB = os.path.expanduser("~/.hermes/benchmark/longmemeval_bench.db")
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-EMBEDDING_DIM = 384
-MAX_QUESTIONS = 500  # Set lower for quick tests
+from jkg.db import PostgresMemory, migrate_postgres
+
+
 TOP_K_VALUES = [1, 3, 5, 10, 20]
 
-# ── Load embedder once ──
-print("Loading embedding model...")
-from sentence_transformers import SentenceTransformer
-embedder = SentenceTransformer(EMBEDDING_MODEL)
-print("  Done.")
 
-# ── Load dataset ──
-print(f"Loading dataset ({MAX_QUESTIONS} questions)...")
-with open(DATASET_PATH) as f:
-    all_questions = json.load(f)
-questions = all_questions[:MAX_QUESTIONS]
-print(f"  Loaded {len(questions)} questions.")
-
-# ── Results storage ──
-results = {
-    "total": 0,
-    "skipped_abstention": 0,
-    "by_type": defaultdict(lambda: {"total": 0, "hits": defaultdict(int)}),
-    "recall_at_k": defaultdict(int),  # K -> hits
-    "mrr_sum": 0.0,
-    "ndcg_sum": defaultdict(float),
-}
-
-# ── Per-question processing ──
-for qi, qdata in enumerate(questions):
-    qid = qdata["question_id"]
-    qtype = qdata["question_type"]
-    question = qdata["question"]
-    gold_sessions = set(qdata["answer_session_ids"])
-    haystack_sessions = qdata["haystack_sessions"]
-    haystack_ids = qdata["haystack_session_ids"]
-
-    # Skip abstention questions (no gold answer)
-    if qid.endswith("_abs") or len(gold_sessions) == 0:
-        results["skipped_abstention"] += 1
-        continue
-
-    results["total"] += 1
-    results["by_type"][qtype]["total"] += 1
-
-    # ── Build fresh index per question ──
-    # Use in-memory SQLite for speed
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA journal_mode=OFF")
-
-    # Create FTS5 table for BM25
-    conn.execute("""
-        CREATE VIRTUAL TABLE sessions_fts USING fts5(
-            session_id, content, tokenize='unicode61'
-        )
-    """)
-
-    # Prepare session texts and embeddings
-    session_texts = []
-    for i, (sessions, sid) in enumerate(zip(haystack_sessions, haystack_ids)):
-        # Concatenate all turns in the session
-        turns = []
-        for turn in sessions:
-            role = turn.get("role", "user")
-            content = turn.get("content", "")
-            turns.append(f"{role}: {content}")
-        session_text = " ".join(turns)
-
-        # Truncate very long sessions
-        if len(session_text) > 8000:
-            session_text = session_text[:8000]
-
-        session_texts.append((sid, session_text))
-
-        # Index in FTS
-        conn.execute(
-            "INSERT INTO sessions_fts(session_id, content) VALUES(?,?)",
-            (sid, session_text)
-        )
-
-    # ── BM25 search (via FTS5) ──
-    # Build FTS query from question words
-    words = [w for w in re.findall(r'[^\s,?.!;:\"\'()\[\]{}]+', question) if len(w) > 1]
-    fts_query = " OR ".join(f'"{w}"' for w in words) if words else question
-
-    bm25_results = []
-    try:
-        rows = conn.execute(
-            "SELECT session_id, rank FROM sessions_fts WHERE sessions_fts MATCH ? "
-            "ORDER BY rank LIMIT 50",
-            (fts_query,)
-        ).fetchall()
-        bm25_results = [(r[0], -r[1]) for r in rows]  # rank is negative, higher = better
-    except Exception:
-        pass
-
-    # ── Vector search ──
-    # Encode question + all sessions
-    question_vec = embedder.encode([question], normalize_embeddings=True)[0]
-    session_vecs = embedder.encode(
-        [st[1] for st in session_texts], normalize_embeddings=True
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Run a real LongMemEval-style retrieval benchmark against JKG Postgres/pgvector."
     )
+    parser.add_argument(
+        "--dataset",
+        default=os.environ.get("LONGMEMEVAL_PATH"),
+        help="Path to LongMemEval-S JSON file. Can also be set with LONGMEMEVAL_PATH.",
+    )
+    parser.add_argument("--max-questions", type=int, default=None)
+    parser.add_argument("--tenant-id", default=f"benchmark-{uuid.uuid4()}")
+    parser.add_argument("--output", default=None)
+    parser.add_argument("--cleanup", action="store_true", help="Delete this benchmark tenant after the run.")
+    args = parser.parse_args()
 
-    # Cosine similarity
-    similarities = np.dot(session_vecs, question_vec)
-    vec_ranked = sorted(
-        [(session_texts[i][0], float(similarities[i]))
-         for i in range(len(session_texts))],
-        key=lambda x: -x[1]
-    )[:50]
+    require_env("JKG_DATABASE_URL")
+    require_env("GEMINI_API_KEY")
+    if not args.dataset:
+        raise SystemExit("LONGMEMEVAL_PATH or --dataset is required")
 
-    # ── RRF Fusion (same k=60 as JKG) ──
-    RRF_K = 60
-    scores = defaultdict(float)
+    dataset_path = Path(args.dataset).expanduser()
+    if not dataset_path.exists():
+        raise SystemExit(f"Dataset file does not exist: {dataset_path}")
 
-    for rank, (sid, _) in enumerate(bm25_results):
-        scores[sid] += 1.0 / (RRF_K + rank + 1)
+    records = load_dataset(dataset_path)
+    if args.max_questions is not None:
+        records = records[: args.max_questions]
+    if not records:
+        raise SystemExit("Dataset is empty")
 
-    for rank, (sid, sim) in enumerate(vec_ranked):
-        scores[sid] += 1.0 / (RRF_K + rank + 1)
+    migrate_postgres()
+    memory = PostgresMemory.from_env()
+    memory.tenant_id = args.tenant_id
 
-    # Sort by RRF score
-    rrf_ranked = sorted(scores.items(), key=lambda x: -x[1])
+    started = time.time()
+    results = run_benchmark(memory, records)
+    results["tenant_id"] = args.tenant_id
+    results["dataset"] = str(dataset_path)
+    results["elapsed_seconds"] = round(time.time() - started, 3)
+    results["top_k_values"] = TOP_K_VALUES
 
-    # ── Also compute BM25-only and Vector-only for ablation ──
-    bm25_only_ranked = [sid for sid, _ in bm25_results]
-    vec_only_ranked = [sid for sid, _ in vec_ranked]
+    output_path = Path(args.output) if args.output else default_output_path()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n")
 
-    # ── Compute metrics ──
-    # recall_any@K
-    for K in TOP_K_VALUES:
-        # Hybrid
-        top_k_hybrid = set(sid for sid, _ in rrf_ranked[:K])
-        if top_k_hybrid & gold_sessions:
-            results["recall_at_k"][f"hybrid@{K}"] += 1
-            results["by_type"][qtype]["hits"][f"hybrid@{K}"] += 1
+    print_report(results)
+    print(f"\nSaved results to {output_path}")
 
-        # BM25-only
-        top_k_bm25 = set(bm25_only_ranked[:K])
-        if top_k_bm25 & gold_sessions:
-            results["recall_at_k"][f"bm25@{K}"] += 1
+    if args.cleanup:
+        cleanup_tenant(memory)
+        print(f"Deleted benchmark tenant {args.tenant_id}")
 
-        # Vector-only
-        top_k_vec = set(vec_only_ranked[:K])
-        if top_k_vec & gold_sessions:
-            results["recall_at_k"][f"vec@{K}"] += 1
+    return 0
 
-    # MRR (Mean Reciprocal Rank) for hybrid
-    for rank, (sid, _) in enumerate(rrf_ranked):
-        if sid in gold_sessions:
-            results["mrr_sum"] += 1.0 / (rank + 1)
-            break
 
-    # NDCG@10 for hybrid
-    dcg = 0.0
-    idcg = 0.0
-    for rank, (sid, _) in enumerate(rrf_ranked[:10]):
-        rel = 1.0 if sid in gold_sessions else 0.0
-        dcg += rel / math.log2(rank + 2)  # rank+2 because log2(1)=0
+def require_env(name: str) -> None:
+    if not os.environ.get(name):
+        raise SystemExit(f"{name} is required for this real benchmark")
 
-    # Ideal DCG: gold sessions at top
-    n_gold = len(gold_sessions)
-    for i in range(min(n_gold, 10)):
-        idcg += 1.0 / math.log2(i + 2)
 
-    if idcg > 0:
-        results["ndcg_sum"]["hybrid"] += dcg / idcg
+def load_dataset(path: Path) -> list[dict[str, Any]]:
+    data = json.loads(path.read_text())
+    if not isinstance(data, list):
+        raise SystemExit("Expected dataset JSON root to be a list")
+    return data
 
-    conn.close()
 
-    # Progress
-    if (qi + 1) % 50 == 0:
-        elapsed = time.time()
-        n = results["total"]
-        r5 = results["recall_at_k"].get("hybrid@5", 0)
-        print(f"  [{qi+1}/{len(questions)}] R@5={r5/n*100:.1f}% ({r5}/{n})")
-
-# ── Final report ──
-total = results["total"]
-print(f"\n{'='*60}")
-print(f"🎯 JKG LongMemEval-S Results ({total} questions)")
-print(f"{'='*60}")
-
-print(f"\n📊 OVERALL RECALL (hybrid = JKG BM25+Vector+RRF):")
-print(f"  {'Metric':<15} {'Hybrid':>8} {'BM25':>8} {'Vector':>8}")
-print(f"  {'-'*15} {'-'*8} {'-'*8} {'-'*8}")
-for K in TOP_K_VALUES:
-    hyb = results["recall_at_k"].get(f"hybrid@{K}", 0)
-    bm = results["recall_at_k"].get(f"bm25@{K}", 0)
-    vec = results["recall_at_k"].get(f"vec@{K}", 0)
-    print(f"  R@{K:<13} {hyb/total*100:>7.1f}% {bm/total*100:>7.1f}% {vec/total*100:>7.1f}%")
-
-print(f"\n  MRR (hybrid):  {results['mrr_sum']/total*100:.1f}%")
-print(f"  NDCG@10 (hybrid): {results['ndcg_sum']['hybrid']/total*100:.1f}%")
-
-print(f"\n📋 BY QUESTION TYPE (hybrid):")
-print(f"  {'Type':<28} {'Count':>6} {'R@5':>8} {'R@10':>8}")
-print(f"  {'-'*28} {'-'*6} {'-'*8} {'-'*8}")
-for qtype in sorted(results["by_type"].keys()):
-    t = results["by_type"][qtype]
-    n = t["total"]
-    if n == 0:
-        continue
-    r5 = t["hits"].get("hybrid@5", 0)
-    r10 = t["hits"].get("hybrid@10", 0)
-    print(f"  {qtype:<28} {n:>6} {r5/n*100:>7.1f}% {r10/n*100:>7.1f}%")
-
-print(f"\n🌍 COMPARISON:")
-print(f"  JKG Hybrid (BM25+Vec+RRF):  R@5={results['recall_at_k'].get('hybrid@5',0)/total*100:.1f}%")
-print(f"  agentmemory Hybrid:         R@5=95.2%  R@10=98.6%")
-print(f"  agentmemory BM25-only:      R@5=86.2%  R@10=94.6%")
-print(f"  MemPalace Vector-only:      R@5=96.6%")
-print(f"  Zep/Graphiti QA:            71.2% (full QA, разные метрики)")
-
-# Save detailed results
-output = {
-    "benchmark": "LongMemEval-S",
-    "system": "JKG 5.1",
-    "architecture": "BM25(FTS5) + Vector(MiniLM-L6-v2) + RRF(k=60)",
-    "questions": total,
-    "skipped_abstention": results["skipped_abstention"],
-    "recall_at_k": {k: results["recall_at_k"][k] for k in sorted(results["recall_at_k"])},
-    "mrr": round(results["mrr_sum"] / max(1, total), 4),
-    "ndcg10": round(results["ndcg_sum"]["hybrid"] / max(1, total), 4),
-    "by_type": {
-        qt: {
-            "count": results["by_type"][qt]["total"],
-            "r5": results["by_type"][qt]["hits"].get("hybrid@5", 0) / max(1, results["by_type"][qt]["total"]),
-            "r10": results["by_type"][qt]["hits"].get("hybrid@10", 0) / max(1, results["by_type"][qt]["total"]),
-        }
-        for qt in sorted(results["by_type"])
+def run_benchmark(memory: PostgresMemory, records: list[dict[str, Any]]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "benchmark": "LongMemEval-style retrieval",
+        "system": "JKG Postgres pgvector",
+        "total": 0,
+        "skipped_abstention": 0,
+        "skipped_invalid": 0,
+        "recall_at_k": defaultdict(int),
+        "by_type": defaultdict(lambda: {"total": 0, "hits": defaultdict(int)}),
+        "failures": [],
     }
-}
 
-out_path = os.path.expanduser("~/.hermes/benchmark/longmemeval_jkg_results.json")
-with open(out_path, "w") as f:
-    json.dump(output, f, indent=2)
-print(f"\n📁 Results saved: {out_path}")
+    for index, record in enumerate(records, start=1):
+        try:
+            item = normalize_record(record)
+        except ValueError as exc:
+            metrics["skipped_invalid"] += 1
+            metrics["failures"].append({"index": index, "error": str(exc)})
+            continue
+
+        if not item["gold_session_ids"]:
+            metrics["skipped_abstention"] += 1
+            continue
+
+        for session_id, text in item["sessions"]:
+            memory.remember(
+                text,
+                source="longmemeval",
+                layer="episodic",
+                metadata={
+                    "benchmark": "longmemeval",
+                    "question_id": item["question_id"],
+                    "session_id": session_id,
+                },
+            )
+
+        query_result = memory.query(item["question"], layers=["episodic"], limit=max(TOP_K_VALUES))
+        ranked_session_ids = [
+            row["metadata"].get("session_id")
+            for row in query_result["results"]
+            if isinstance(row.get("metadata"), dict)
+        ]
+
+        metrics["total"] += 1
+        metrics["by_type"][item["question_type"]]["total"] += 1
+        gold = set(item["gold_session_ids"])
+        for top_k in TOP_K_VALUES:
+            if set(ranked_session_ids[:top_k]) & gold:
+                key = f"recall@{top_k}"
+                metrics["recall_at_k"][key] += 1
+                metrics["by_type"][item["question_type"]]["hits"][key] += 1
+
+        if index % 10 == 0:
+            total = metrics["total"]
+            hits = metrics["recall_at_k"]["recall@5"]
+            print(f"[{index}/{len(records)}] recall@5={hits / max(1, total):.3f}")
+
+    metrics["recall_at_k"] = dict(metrics["recall_at_k"])
+    metrics["by_type"] = {
+        question_type: {
+            "total": values["total"],
+            "hits": dict(values["hits"]),
+        }
+        for question_type, values in metrics["by_type"].items()
+    }
+    return metrics
+
+
+def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    question_id = str(record.get("question_id") or record.get("id") or "")
+    question = str(record.get("question") or "")
+    question_type = str(record.get("question_type") or "unknown")
+    gold_session_ids = record.get("answer_session_ids") or record.get("gold_session_ids") or []
+    haystack_sessions = record.get("haystack_sessions")
+    haystack_session_ids = record.get("haystack_session_ids")
+
+    if not question_id:
+        raise ValueError("missing question_id")
+    if not question:
+        raise ValueError(f"{question_id}: missing question")
+    if not isinstance(gold_session_ids, list):
+        raise ValueError(f"{question_id}: answer_session_ids must be a list")
+    if not isinstance(haystack_sessions, list):
+        raise ValueError(f"{question_id}: haystack_sessions must be a list")
+    if not isinstance(haystack_session_ids, list):
+        raise ValueError(f"{question_id}: haystack_session_ids must be a list")
+    if len(haystack_sessions) != len(haystack_session_ids):
+        raise ValueError(f"{question_id}: haystack_sessions and haystack_session_ids length mismatch")
+
+    sessions = [
+        (str(session_id), render_session_text(session))
+        for session_id, session in zip(haystack_session_ids, haystack_sessions, strict=True)
+    ]
+    return {
+        "question_id": question_id,
+        "question": question,
+        "question_type": question_type,
+        "gold_session_ids": [str(session_id) for session_id in gold_session_ids],
+        "sessions": sessions,
+    }
+
+
+def render_session_text(session: Any) -> str:
+    if isinstance(session, str):
+        return session
+    if not isinstance(session, list):
+        raise ValueError("session must be a string or list of turns")
+
+    turns = []
+    for turn in session:
+        if isinstance(turn, str):
+            turns.append(turn)
+            continue
+        if not isinstance(turn, dict):
+            raise ValueError("session turn must be a string or object")
+        role = turn.get("role", "unknown")
+        content = turn.get("content", "")
+        turns.append(f"{role}: {content}")
+    return "\n".join(turns)
+
+
+def default_output_path() -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return Path("benchmark/results") / f"longmemeval_jkg_{stamp}.json"
+
+
+def cleanup_tenant(memory: PostgresMemory) -> None:
+    with memory._connect() as conn:
+        conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id = %s", (memory.tenant_id,))
+        conn.commit()
+
+
+def print_report(results: dict[str, Any]) -> None:
+    total = results["total"]
+    print("\nJKG LongMemEval-style retrieval results")
+    print(f"Questions scored: {total}")
+    print(f"Skipped abstention: {results['skipped_abstention']}")
+    print(f"Skipped invalid: {results['skipped_invalid']}")
+    for top_k in TOP_K_VALUES:
+        key = f"recall@{top_k}"
+        hits = results["recall_at_k"].get(key, 0)
+        print(f"{key}: {hits / max(1, total):.4f} ({hits}/{total})")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
