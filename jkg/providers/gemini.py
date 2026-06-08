@@ -51,12 +51,46 @@ class GeminiEmbeddingProvider:
             body = (response.text or "")[:300]
             raise RuntimeError(f"Gemini embedding request failed: {exc}; body={body}") from exc
 
-        if len(values) > self.dimension:
-            values = values[: self.dimension]
-        if len(values) < self.dimension:
-            values = values + [0.0] * (self.dimension - len(values))
-        return [float(value) for value in values]
+        return self._normalize_values(values)
 
     def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
-        return [self.embed_text(text) for text in texts]
+        if not texts:
+            return []
 
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents"
+        payload = {
+            "requests": [
+                {
+                    "model": f"models/{self.model}",
+                    "content": {"parts": [{"text": text}]},
+                }
+                for text in texts
+            ]
+        }
+        response = requests.post(
+            url,
+            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            json=payload,
+            timeout=self.timeout,
+        )
+        try:
+            response.raise_for_status()
+            payload = response.json()
+            embeddings = payload["embeddings"]
+        except Exception as exc:
+            body = (response.text or "")[:300]
+            raise RuntimeError(f"Gemini batch embedding request failed: {exc}; body={body}") from exc
+
+        if len(embeddings) != len(texts):
+            raise RuntimeError(
+                f"Gemini batch embedding count mismatch: expected {len(texts)}, got {len(embeddings)}"
+            )
+        return [self._normalize_values(item["values"]) for item in embeddings]
+
+    def _normalize_values(self, values: Sequence[float]) -> list[float]:
+        result = list(values)
+        if len(result) > self.dimension:
+            result = result[: self.dimension]
+        if len(result) < self.dimension:
+            result = result + [0.0] * (self.dimension - len(result))
+        return [float(value) for value in result]

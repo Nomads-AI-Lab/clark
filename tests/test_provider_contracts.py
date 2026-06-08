@@ -34,3 +34,16 @@ def test_gemini_embedding_returns_configured_vector_dimension():
     assert len(embedding) == EMBEDDING_DIM
     assert any(float(value) != 0.0 for value in embedding)
 
+
+def test_gemini_batch_embedding_returns_one_vector_per_text():
+    if not os.environ.get("GEMINI_API_KEY"):
+        pytest.skip("GEMINI_API_KEY is required for Gemini batch embedding provider contract test")
+
+    from jkg.providers import GeminiEmbeddingProvider
+
+    provider = GeminiEmbeddingProvider.from_env(dimension=768)
+    embeddings = provider.embed_batch(["JKG batch embedding A", "JKG batch embedding B"])
+
+    assert len(embeddings) == 2
+    assert all(len(embedding) == 768 for embedding in embeddings)
+    assert all(any(float(value) != 0.0 for value in embedding) for embedding in embeddings)

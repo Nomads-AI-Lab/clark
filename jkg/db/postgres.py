@@ -151,6 +151,49 @@ class PostgresMemory:
             "source": source,
         }
 
+    def remember_many(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        source: str = "api",
+        layer: str = "factual",
+    ) -> dict[str, Any]:
+        if not items:
+            return {"status": "ok", "backend": "postgres", "inserted": 0, "ids": []}
+
+        texts = [str(item["text"]) for item in items]
+        embeddings = self._embedding_provider().embed_batch(texts)
+        memory_ids = [uuid.uuid4() for _ in items]
+        rows = [
+            (
+                memory_id,
+                self.tenant_id,
+                str(item.get("layer", layer)),
+                str(item["text"]),
+                str(item.get("source", source)),
+                Jsonb(item.get("metadata") or {}),
+                _vector_literal(embedding),
+            )
+            for memory_id, item, embedding in zip(memory_ids, items, embeddings, strict=True)
+        ]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO jkg_memory_items
+                        (id, tenant_id, layer, content, source, metadata, embedding)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
+                    """,
+                    rows,
+                )
+            conn.commit()
+        return {
+            "status": "ok",
+            "backend": "postgres",
+            "inserted": len(rows),
+            "ids": [str(memory_id) for memory_id in memory_ids],
+        }
+
     def query(self, text: str, layers: list[str] | None = None, limit: int = 10) -> dict[str, Any]:
         embedding = self._embedding_provider().embed_text(text)
         layer_filter = layers or ["profile", "factual", "episodic", "procedural"]
@@ -210,4 +253,3 @@ class PostgresMemory:
                 for row in rows
             ],
         }
-

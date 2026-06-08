@@ -117,17 +117,23 @@ def run_benchmark(
         question_tenant_id = f"{run_tenant_id}-{item['question_id']}"
         memory.tenant_id = question_tenant_id
 
-        for session_id, text in item["sessions"]:
-            memory.remember(
-                text,
-                source="longmemeval",
-                layer="episodic",
-                metadata={
-                    "benchmark": "longmemeval",
-                    "question_id": item["question_id"],
-                    "session_id": session_id,
-                },
-            )
+        memory.remember_many(
+            [
+                {
+                    "text": text,
+                    "source": "longmemeval",
+                    "layer": "episodic",
+                    "metadata": {
+                        "benchmark": "longmemeval",
+                        "question_id": item["question_id"],
+                        "session_id": session_id,
+                    },
+                }
+                for session_id, text in item["sessions"]
+            ],
+            source="longmemeval",
+            layer="episodic",
+        )
 
         query_result = memory.query(item["question"], layers=["episodic"], limit=max(TOP_K_VALUES))
         ranked_session_ids = [
