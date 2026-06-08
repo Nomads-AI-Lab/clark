@@ -48,6 +48,10 @@ postgres = [
 mcp = [
     "mcp>=1.23,<2",
 ]
+benchmark = [
+    "google-genai>=2,<3",
+    "mem0ai>=2,<3",
+]
 
 [project.scripts]
 jkg = "jkg.cli:main"

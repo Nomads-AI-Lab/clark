@@ -22,3 +22,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Added batch Gemini embeddings and Postgres bulk inserts for benchmark ingestion.
 - Recorded a 5-question real LongMemEval-S bounded benchmark run.
 - Added bearer-authenticated MCP Streamable HTTP server and tests.
+- Added a real provider comparison runner for JKG and Mem0 OSS.

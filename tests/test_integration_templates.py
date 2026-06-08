@@ -40,6 +40,13 @@ def test_benchmark_runner_compiles() -> None:
     )
 
 
+def test_provider_comparison_runner_compiles() -> None:
+    py_compile.compile(
+        str(ROOT / "benchmark/run_provider_comparison.py"),
+        doraise=True,
+    )
+
+
 def test_mcp_http_app_compiles() -> None:
     py_compile.compile(
         str(ROOT / "jkg/mcp_http.py"),

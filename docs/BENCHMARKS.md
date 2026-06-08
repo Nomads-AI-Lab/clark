@@ -35,3 +35,31 @@ Use a unique tenant per run. The runner creates one automatically. Add `--cleanu
 - Run ablations for vector-only, keyword-only, and hybrid retrieval.
 - Run comparable benchmarks against other memory providers in the same environment when making competitive claims.
 - Record latency and provider cost per run.
+
+## Provider Comparison Runner
+
+Install benchmark dependencies:
+
+```bash
+uv sync --extra benchmark --extra postgres
+```
+
+Run JKG and Mem0 on the same LongMemEval-S slice:
+
+```bash
+GEMINI_API_KEY=... \
+DEEPSEEK_API_KEY=... \
+JKG_DATABASE_URL=postgresql://jkg:strong-password@127.0.0.1:5432/jkg \
+uv run python benchmark/run_provider_comparison.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --providers jkg,mem0 \
+  --max-questions 1 \
+  --output benchmark/results/provider-comparison.json
+```
+
+Current real adapters:
+
+- `jkg`: JKG Postgres/pgvector with Gemini embeddings.
+- `mem0`: Mem0 OSS with DeepSeek LLM, Gemini embeddings, and local Qdrant.
+
+Managed providers such as Supermemory and hosted Zep require their own API keys. Do not include them in public comparison tables until they have been run in the same environment.
