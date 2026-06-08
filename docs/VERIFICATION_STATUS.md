@@ -29,7 +29,9 @@ This file tracks real verification runs for the production-readiness branch. It 
   - Bounded run: first 1 question, 53 haystack sessions.
   - Backend: real Postgres/pgvector and Gemini embeddings.
   - Result: recall@1/3/5/10/20 = 1.0 for the single scored question.
-  - Artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-smoke.json`.
+  - Initial per-item embedding run: 21.089 seconds.
+  - Batch Gemini embedding run: 2.106 seconds.
+  - Latest artifact path on the test server: `/opt/jkg-production-ready-test/benchmark/results/remote-longmemeval-batch-smoke.json`.
 - Local MCP stdio handshake:
   - Starts the real `jkg mcp` server over stdio through the official MCP Python SDK.
   - Runs initialize, list tools, and `jkg_health`.
@@ -37,8 +39,7 @@ This file tracks real verification runs for the production-readiness branch. It 
 ## Not Yet Fully Verified
 
 - Full LongMemEval-S run across all 500 questions.
-  - This will require tens of thousands of real embedding calls with the current per-session runner.
-  - Before running the full job, add batching and cost/progress controls.
+  - Batch embedding is implemented, but the full run still needs cost/progress controls and a deliberate run window.
 - Competitive benchmark runs against top memory providers.
   - Requires installing and configuring those providers in the same environment.
 - Real Claude Code, Codex, Cursor, and Gemini CLI MCP handshakes on the remote server.

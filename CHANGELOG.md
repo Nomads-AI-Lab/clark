@@ -19,3 +19,4 @@ This project follows Conventional Commits and intends to follow Semantic Version
 - Replaced the old benchmark script with a credential-gated Postgres/pgvector runner.
 - Added verification status for real provider, Docker, Postgres, and LongMemEval-S smoke runs.
 - Added a real MCP stdio client handshake test.
+- Added batch Gemini embeddings and Postgres bulk inserts for benchmark ingestion.
