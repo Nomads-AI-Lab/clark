@@ -21,14 +21,14 @@ def _free_port() -> int:
 def test_mcp_http_rejects_missing_bearer_token() -> None:
     port = _free_port()
     env = os.environ.copy()
-    env["JKG_ENV"] = "production"
-    env["JKG_MCP_AUTH_TOKEN"] = "secret-token"
+    env["CLARK_ENV"] = "production"
+    env["CLARK_MCP_AUTH_TOKEN"] = "secret-token"
     proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "uvicorn",
-            "jkg.mcp_http:app",
+            "clark.mcp_http:app",
             "--host",
             "127.0.0.1",
             "--port",
@@ -52,16 +52,16 @@ def test_mcp_http_rejects_missing_bearer_token() -> None:
 def test_mcp_http_authenticated_client_lists_tools(tmp_path) -> None:
     port = _free_port()
     env = os.environ.copy()
-    env["JKG_ENV"] = "production"
-    env["JKG_MCP_AUTH_TOKEN"] = "secret-token"
-    env["JKG_DB_PATH"] = str(tmp_path / "memory.db")
-    env.pop("JKG_DATABASE_URL", None)
+    env["CLARK_ENV"] = "production"
+    env["CLARK_MCP_AUTH_TOKEN"] = "secret-token"
+    env["CLARK_DB_PATH"] = str(tmp_path / "memory.db")
+    env.pop("CLARK_DATABASE_URL", None)
     proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "uvicorn",
-            "jkg.mcp_http:app",
+            "clark.mcp_http:app",
             "--host",
             "127.0.0.1",
             "--port",
@@ -89,7 +89,7 @@ def test_mcp_http_authenticated_client_lists_tools(tmp_path) -> None:
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         tools = await session.list_tools()
-                        assert "jkg_health" in {tool.name for tool in tools.tools}
+                        assert "clark_health" in {tool.name for tool in tools.tools}
 
         asyncio.run(run_client())
     finally:

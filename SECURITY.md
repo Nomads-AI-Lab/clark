@@ -1,10 +1,10 @@
 # Security Policy
 
-JKG stores personal memory. Treat all memory records, database backups, logs, and exports as sensitive data.
+Clark stores personal memory. Treat all memory records, database backups, logs, and exports as sensitive data.
 
 ## Supported Versions
 
-JKG is pre-1.0 hardening work. Security fixes should target the default branch and any active release branch once releases begin.
+Clark is pre-1.0 hardening work. Security fixes should target the default branch and any active release branch once releases begin.
 
 ## Reporting a Vulnerability
 
@@ -22,11 +22,11 @@ Include:
 
 ## Security Requirements
 
-- Production HTTP deployments must set `JKG_AUTH_TOKEN`.
+- Production HTTP deployments must set `CLARK_AUTH_TOKEN`.
 - Provider credentials must be supplied through environment variables or secret managers.
 - `.env`, database files, memory exports, and logs containing user data must not be committed.
 - Docker deployments should use strong Postgres passwords, private networks, and TLS at the reverse proxy or platform edge.
-- Public Streamable HTTP MCP deployments must set `JKG_MCP_AUTH_TOKEN` or `JKG_AUTH_TOKEN`. Stdio MCP is intended for local agent use.
+- Public Streamable HTTP MCP deployments must set `CLARK_MCP_AUTH_TOKEN` or `CLARK_AUTH_TOKEN`. Stdio MCP is intended for local agent use.
 
 ## Current Limitations
 

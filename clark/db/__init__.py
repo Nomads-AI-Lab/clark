@@ -1,4 +1,4 @@
-"""Database backends for JKG."""
+"""Database backends for Clark."""
 
 from .postgres import PostgresMemory, migrate_postgres
 

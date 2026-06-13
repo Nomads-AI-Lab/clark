@@ -1,4 +1,4 @@
-"""Postgres + pgvector backend for production JKG deployments."""
+"""Postgres + pgvector backend for production Clark deployments."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from jkg.providers import GeminiEmbeddingProvider
+from clark.providers import GeminiEmbeddingProvider
 
 
 EMBEDDING_DIMENSION = 768
@@ -20,7 +20,7 @@ EMBEDDING_DIMENSION = 768
 MIGRATION_SQL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE IF NOT EXISTS jkg_memory_items (
+CREATE TABLE IF NOT EXISTS clark_memory_items (
     id UUID PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     layer TEXT NOT NULL DEFAULT 'factual',
@@ -35,14 +35,14 @@ CREATE TABLE IF NOT EXISTS jkg_memory_items (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_jkg_memory_items_tenant_created
-    ON jkg_memory_items (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_clark_memory_items_tenant_created
+    ON clark_memory_items (tenant_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_jkg_memory_items_search
-    ON jkg_memory_items USING gin (search_vector);
+CREATE INDEX IF NOT EXISTS idx_clark_memory_items_search
+    ON clark_memory_items USING gin (search_vector);
 
-CREATE INDEX IF NOT EXISTS idx_jkg_memory_items_embedding_hnsw
-    ON jkg_memory_items USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_clark_memory_items_embedding_hnsw
+    ON clark_memory_items USING hnsw (embedding vector_cosine_ops);
 """
 
 
@@ -51,9 +51,9 @@ def _vector_literal(values: list[float]) -> str:
 
 
 def migrate_postgres(database_url: str | None = None) -> dict[str, Any]:
-    dsn = database_url or os.environ.get("JKG_DATABASE_URL")
+    dsn = database_url or os.environ.get("CLARK_DATABASE_URL")
     if not dsn:
-        raise RuntimeError("JKG_DATABASE_URL is required for Postgres migrations")
+        raise RuntimeError("CLARK_DATABASE_URL is required for Postgres migrations")
 
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         conn.execute(MIGRATION_SQL)
@@ -76,12 +76,12 @@ class PostgresMemory:
 
     @classmethod
     def from_env(cls) -> "PostgresMemory":
-        database_url = os.environ.get("JKG_DATABASE_URL")
+        database_url = os.environ.get("CLARK_DATABASE_URL")
         if not database_url:
-            raise RuntimeError("JKG_DATABASE_URL is required for Postgres backend")
+            raise RuntimeError("CLARK_DATABASE_URL is required for Postgres backend")
         return cls(
             database_url=database_url,
-            tenant_id=os.environ.get("JKG_TENANT_ID", "default"),
+            tenant_id=os.environ.get("CLARK_TENANT_ID", "default"),
         )
 
     def _connect(self):
@@ -100,7 +100,7 @@ class PostgresMemory:
                     count(*) FILTER (WHERE layer = 'factual')::int AS factual,
                     count(*) FILTER (WHERE layer = 'episodic')::int AS episodic,
                     count(*) FILTER (WHERE layer = 'procedural')::int AS procedural
-                FROM jkg_memory_items
+                FROM clark_memory_items
                 WHERE tenant_id = %s
                 """,
                 (self.tenant_id,),
@@ -128,7 +128,7 @@ class PostgresMemory:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO jkg_memory_items
+                INSERT INTO clark_memory_items
                     (id, tenant_id, layer, content, source, metadata, embedding)
                 VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
                 """,
@@ -180,7 +180,7 @@ class PostgresMemory:
             with conn.cursor() as cur:
                 cur.executemany(
                     """
-                    INSERT INTO jkg_memory_items
+                    INSERT INTO clark_memory_items
                         (id, tenant_id, layer, content, source, metadata, embedding)
                     VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
                     """,
@@ -218,7 +218,7 @@ class PostgresMemory:
                         (1 - (embedding <=> q.query_embedding)) * 0.8
                         + ts_rank_cd(search_vector, q.text_query) * 0.2
                     ) AS score
-                FROM jkg_memory_items, q
+                FROM clark_memory_items, q
                 WHERE tenant_id = %s
                   AND layer = ANY(%s)
                 ORDER BY score DESC

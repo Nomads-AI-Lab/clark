@@ -1,6 +1,6 @@
-# Contributing to Jessica Knowledge Graph
+# Contributing to Clark
 
-Thanks for helping improve JKG. This project is intended to become reliable infrastructure for personal agents, so contributions should favor correctness, clear failure modes, and real integration tests over broad but unverified feature surface.
+Thanks for helping improve Clark. This project is intended to become reliable infrastructure for personal agents, so contributions should favor correctness, clear failure modes, and real integration tests over broad but unverified feature surface.
 
 ## Development Setup
 
@@ -44,7 +44,7 @@ GEMINI_API_KEY=... DEEPSEEK_API_KEY=... uv run pytest tests/test_provider_contra
 Storage changes must run real Postgres/pgvector tests:
 
 ```bash
-JKG_DATABASE_URL=postgresql://... GEMINI_API_KEY=... uv run pytest tests/test_postgres_backend.py
+CLARK_DATABASE_URL=postgresql://... GEMINI_API_KEY=... uv run pytest tests/test_postgres_backend.py
 ```
 
 ## Commit Style

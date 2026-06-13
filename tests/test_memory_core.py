@@ -1,4 +1,4 @@
-from jkg import HybridMemory
+from clark import HybridMemory
 
 
 def test_stats_initializes_empty_database(tmp_path):

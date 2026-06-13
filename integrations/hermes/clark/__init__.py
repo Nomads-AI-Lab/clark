@@ -1,4 +1,4 @@
-"""Hermes memory provider for Jessica Knowledge Graph."""
+"""Hermes memory provider for Clark."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import requests
 from agent.memory_provider import MemoryProvider
 
 
-class JKGMemoryProvider(MemoryProvider):
-    """Hermes MemoryProvider implementation backed by the JKG HTTP API."""
+class ClarkMemoryProvider(MemoryProvider):
+    """Hermes MemoryProvider implementation backed by the Clark HTTP API."""
 
     def __init__(self) -> None:
         self._api_url = ""
@@ -21,30 +21,30 @@ class JKGMemoryProvider(MemoryProvider):
 
     @property
     def name(self) -> str:
-        return "jkg"
+        return "clark"
 
     def is_available(self) -> bool:
-        return bool(os.environ.get("JKG_API_URL") and os.environ.get("JKG_AUTH_TOKEN"))
+        return bool(os.environ.get("CLARK_API_URL") and os.environ.get("CLARK_AUTH_TOKEN"))
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
-        api_url = os.environ.get("JKG_API_URL")
-        token = os.environ.get("JKG_AUTH_TOKEN")
+        api_url = os.environ.get("CLARK_API_URL")
+        token = os.environ.get("CLARK_AUTH_TOKEN")
         if not api_url:
-            raise RuntimeError("JKG_API_URL is required for the JKG Hermes provider")
+            raise RuntimeError("CLARK_API_URL is required for the Clark Hermes provider")
         if not token:
-            raise RuntimeError("JKG_AUTH_TOKEN is required for the JKG Hermes provider")
+            raise RuntimeError("CLARK_AUTH_TOKEN is required for the Clark Hermes provider")
 
         self._api_url = api_url.rstrip("/")
         self._token = token
         self._session_id = session_id
-        self._timeout = float(os.environ.get("JKG_HTTP_TIMEOUT_SECONDS", "10"))
+        self._timeout = float(os.environ.get("CLARK_HTTP_TIMEOUT_SECONDS", "10"))
 
         self._request("GET", "/healthz")
 
     def system_prompt_block(self) -> str:
         return (
-            "JKG memory provider is active. Use jkg_search_memory for durable recall "
-            "and jkg_remember_memory for explicit user-approved memory writes."
+            "Clark memory provider is active. Use clark_search_memory for durable recall "
+            "and clark_remember_memory for explicit user-approved memory writes."
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
@@ -55,7 +55,7 @@ class JKGMemoryProvider(MemoryProvider):
         if not rows:
             return ""
 
-        lines = ["Relevant JKG memories:"]
+        lines = ["Relevant Clark memories:"]
         for row in rows:
             text = row.get("text") or row.get("content") or row.get("value") or str(row)
             score = row.get("score")
@@ -80,8 +80,8 @@ class JKGMemoryProvider(MemoryProvider):
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
             {
-                "name": "jkg_search_memory",
-                "description": "Search durable JKG memory for relevant profile, factual, episodic, and procedural context.",
+                "name": "clark_search_memory",
+                "description": "Search durable Clark memory for relevant profile, factual, episodic, and procedural context.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -92,8 +92,8 @@ class JKGMemoryProvider(MemoryProvider):
                 },
             },
             {
-                "name": "jkg_remember_memory",
-                "description": "Store an explicit memory in JKG. Use only when the user asks to remember something or the turn contains durable preference/project context.",
+                "name": "clark_remember_memory",
+                "description": "Store an explicit memory in Clark. Use only when the user asks to remember something or the turn contains durable preference/project context.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -106,10 +106,10 @@ class JKGMemoryProvider(MemoryProvider):
         ]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
-        if tool_name == "jkg_search_memory":
+        if tool_name == "clark_search_memory":
             result = self._query(str(args["query"]), limit=int(args.get("limit", 10)))
             return json.dumps(result, ensure_ascii=False)
-        if tool_name == "jkg_remember_memory":
+        if tool_name == "clark_remember_memory":
             result = self._remember(str(args["text"]), source=str(args.get("source", "hermes-tool")))
             return json.dumps(result, ensure_ascii=False)
         raise NotImplementedError(f"Provider {self.name} does not handle tool {tool_name}")
@@ -132,17 +132,17 @@ class JKGMemoryProvider(MemoryProvider):
         return [
             {
                 "key": "api_url",
-                "description": "JKG HTTP API base URL.",
+                "description": "Clark HTTP API base URL.",
                 "required": True,
                 "default": "http://127.0.0.1:8000",
-                "env_var": "JKG_API_URL",
+                "env_var": "CLARK_API_URL",
             },
             {
                 "key": "auth_token",
-                "description": "Bearer token for the JKG HTTP API.",
+                "description": "Bearer token for the Clark HTTP API.",
                 "secret": True,
                 "required": True,
-                "env_var": "JKG_AUTH_TOKEN",
+                "env_var": "CLARK_AUTH_TOKEN",
             },
         ]
 
@@ -163,7 +163,7 @@ class JKGMemoryProvider(MemoryProvider):
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self._api_url or not self._token:
-            raise RuntimeError("JKG Hermes provider has not been initialized")
+            raise RuntimeError("Clark Hermes provider has not been initialized")
 
         response = requests.request(
             method,
@@ -173,12 +173,12 @@ class JKGMemoryProvider(MemoryProvider):
             timeout=self._timeout,
         )
         if response.status_code >= 400:
-            raise RuntimeError(f"JKG API request failed: {response.status_code} {response.text}")
+            raise RuntimeError(f"Clark API request failed: {response.status_code} {response.text}")
         data = response.json()
         if not isinstance(data, dict):
-            raise RuntimeError("JKG API returned a non-object response")
+            raise RuntimeError("Clark API returned a non-object response")
         return data
 
 
-def register() -> JKGMemoryProvider:
-    return JKGMemoryProvider()
+def register() -> ClarkMemoryProvider:
+    return ClarkMemoryProvider()

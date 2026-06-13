@@ -4,11 +4,11 @@ import requests
 
 
 def test_gemini_provider_reads_timeout_from_env(monkeypatch) -> None:
-    from jkg.providers.gemini import GeminiEmbeddingProvider
+    from clark.providers.gemini import GeminiEmbeddingProvider
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("JKG_GEMINI_TIMEOUT_SECONDS", "120")
-    monkeypatch.setenv("JKG_GEMINI_MAX_RETRIES", "7")
+    monkeypatch.setenv("CLARK_GEMINI_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("CLARK_GEMINI_MAX_RETRIES", "7")
 
     provider = GeminiEmbeddingProvider.from_env()
 
@@ -17,7 +17,7 @@ def test_gemini_provider_reads_timeout_from_env(monkeypatch) -> None:
 
 
 def test_gemini_provider_retries_timeouts(monkeypatch) -> None:
-    from jkg.providers.gemini import GeminiEmbeddingProvider
+    from clark.providers.gemini import GeminiEmbeddingProvider
 
     calls = {"count": 0}
 
@@ -37,8 +37,8 @@ def test_gemini_provider_retries_timeouts(monkeypatch) -> None:
             raise requests.Timeout("temporary timeout")
         return Response()
 
-    monkeypatch.setattr("jkg.providers.gemini.requests.post", post)
-    monkeypatch.setattr("jkg.providers.gemini.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("clark.providers.gemini.requests.post", post)
+    monkeypatch.setattr("clark.providers.gemini.time.sleep", lambda seconds: None)
 
     provider = GeminiEmbeddingProvider(api_key="test-key", max_retries=1)
     embedding = provider.embed_text("retry timeout test")

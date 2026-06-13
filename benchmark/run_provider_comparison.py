@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare JKG with real memory providers on LongMemEval-style retrieval."""
+"""Compare Clark with real memory providers on LongMemEval-style retrieval."""
 
 from __future__ import annotations
 
@@ -25,13 +25,13 @@ class MemoryAdapter(Protocol):
     def cleanup(self) -> None: ...
 
 
-class JKGAdapter:
-    name = "jkg"
+class ClarkAdapter:
+    name = "clark"
 
     def __init__(self, run_id: str) -> None:
-        from jkg.db import PostgresMemory, migrate_postgres
+        from clark.db import PostgresMemory, migrate_postgres
 
-        require_env("JKG_DATABASE_URL")
+        require_env("CLARK_DATABASE_URL")
         require_env("GEMINI_API_KEY")
         migrate_postgres()
         self.memory = PostgresMemory.from_env()
@@ -63,7 +63,7 @@ class JKGAdapter:
 
     def cleanup(self) -> None:
         with self.memory._connect() as conn:
-            conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id LIKE %s", (f"{self.run_id}-%",))
+            conn.execute("DELETE FROM clark_memory_items WHERE tenant_id LIKE %s", (f"{self.run_id}-%",))
             conn.commit()
 
 
@@ -137,7 +137,7 @@ class Mem0Adapter:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run real provider comparisons on LongMemEval-S.")
     parser.add_argument("--dataset", default=os.environ.get("LONGMEMEVAL_PATH"), required=False)
-    parser.add_argument("--providers", default="jkg,mem0")
+    parser.add_argument("--providers", default="clark,mem0")
     parser.add_argument("--max-questions", type=int, default=1)
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--checkpoint-dir", default="benchmark/results/provider-checkpoints")
@@ -198,8 +198,8 @@ def main() -> int:
 
 
 def build_adapter(provider_name: str, run_id: str) -> MemoryAdapter:
-    if provider_name == "jkg":
-        return JKGAdapter(run_id)
+    if provider_name == "clark":
+        return ClarkAdapter(run_id)
     if provider_name == "mem0":
         return Mem0Adapter(run_id, Path("benchmark/provider_state") / run_id / "mem0")
     raise SystemExit(f"Unsupported provider: {provider_name}")

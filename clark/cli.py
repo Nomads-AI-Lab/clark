@@ -1,4 +1,4 @@
-"""Console entrypoint for the JKG command line interface."""
+"""Console entrypoint for the Clark command line interface."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(doctor_main())
 
     if args[:1] == ["migrate"]:
-        if os.environ.get("JKG_DATABASE_URL"):
+        if os.environ.get("CLARK_DATABASE_URL"):
             from .db import migrate_postgres
 
             result = migrate_postgres()
@@ -25,42 +25,42 @@ def main(argv: list[str] | None = None) -> None:
 
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return
-        print("No JKG_DATABASE_URL set; legacy SQLite schema initializes on first use.")
+        print("No CLARK_DATABASE_URL set; legacy SQLite schema initializes on first use.")
         return
 
     if args[:1] == ["serve"]:
         try:
             import uvicorn
         except ImportError as exc:
-            raise SystemExit("Install server dependencies with: pip install 'jkg[server]'") from exc
+            raise SystemExit("Install server dependencies with: pip install 'clark[server]'") from exc
 
         host = "0.0.0.0"
         port = int(args[1]) if len(args) > 1 else 8000
-        uvicorn.run("jkg.server:app", host=host, port=port)
+        uvicorn.run("clark.server:app", host=host, port=port)
         return
 
     if args[:1] == ["mcp"]:
         try:
             from .mcp_server import main as mcp_main
         except ImportError as exc:
-            raise SystemExit("Install MCP dependencies with: pip install 'jkg[mcp]'") from exc
+            raise SystemExit("Install MCP dependencies with: pip install 'clark[mcp]'") from exc
 
         transport = args[1] if len(args) > 1 else "stdio"
         if transport == "streamable-http":
             try:
                 import uvicorn
             except ImportError as exc:
-                raise SystemExit("Install server dependencies with: pip install 'jkg[server,mcp]'") from exc
+                raise SystemExit("Install server dependencies with: pip install 'clark[server,mcp]'") from exc
 
-            host = os.environ.get("JKG_MCP_HOST", "0.0.0.0")
-            port = int(os.environ.get("JKG_MCP_PORT", args[2] if len(args) > 2 else "8001"))
-            uvicorn.run("jkg.mcp_http:app", host=host, port=port)
+            host = os.environ.get("CLARK_MCP_HOST", "0.0.0.0")
+            port = int(os.environ.get("CLARK_MCP_PORT", args[2] if len(args) > 2 else "8001"))
+            uvicorn.run("clark.mcp_http:app", host=host, port=port)
             return
         mcp_main(transport=transport)
         return
 
-    sys.argv = [old_argv[0] if old_argv else "jkg", *args]
+    sys.argv = [old_argv[0] if old_argv else "clark", *args]
     try:
-        runpy.run_module("jkg.memory", run_name="__main__")
+        runpy.run_module("clark.memory", run_name="__main__")
     finally:
         sys.argv = old_argv

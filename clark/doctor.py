@@ -1,4 +1,4 @@
-"""Local environment diagnostics for JKG."""
+"""Local environment diagnostics for Clark."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def collect_diagnostics() -> dict:
         },
         "package": {
             "ok": True,
-            "version": importlib.metadata.version("jkg"),
+            "version": importlib.metadata.version("clark"),
         },
         "sqlite": {
             "ok": True,
@@ -40,15 +40,15 @@ def collect_diagnostics() -> dict:
         "deepseek": {
             "ok": bool(os.environ.get("DEEPSEEK_API_KEY")),
             "configured": bool(os.environ.get("DEEPSEEK_API_KEY")),
-            "model": os.environ.get("JKG_LLM_MODEL", "deepseek-v4-flash"),
+            "model": os.environ.get("CLARK_LLM_MODEL", "deepseek-v4-flash"),
         },
         "gemini": {
             "ok": bool(os.environ.get("GEMINI_API_KEY")),
             "configured": bool(os.environ.get("GEMINI_API_KEY")),
-            "model": os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-001"),
+            "model": os.environ.get("CLARK_EMBEDDING_MODEL", "gemini-embedding-001"),
         },
     }
-    database_url = os.environ.get("JKG_DATABASE_URL")
+    database_url = os.environ.get("CLARK_DATABASE_URL")
     if database_url:
         try:
             import psycopg

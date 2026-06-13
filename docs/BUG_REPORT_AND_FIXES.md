@@ -1,14 +1,14 @@
-# JKG 7.0 (Jessica Knowledge Graph) - Architecture Audit & Fix Checklist
+# Clark 7.0 (Clark) - Architecture Audit & Fix Checklist
 
 ## Current Situation
-JKG 7.0 is an ambitious "Unified Memory Fabric" that merges 4 distinct memory layers (Profile, Factual, Episodic, Procedural) into a single SQLite database using `sqlite-vec`. 
+Clark 7.0 is an ambitious "Unified Memory Fabric" that merges 4 distinct memory layers (Profile, Factual, Episodic, Procedural) into a single SQLite database using `sqlite-vec`. 
 During automated stress testing (8 edge-case tests on the `teston` profile), the system passed multi-layer fusion and schema evolution but failed critically on temporal reasoning, conflict resolution, data deletion, and dependency management.
 
 ## Bug Checklist & Remediation Plan
 
 ### 1. Hardcoded Heavy Dependencies (`sentence-transformers` & PyTorch)
 - **What is it:** The system forces a 500MB+ PyTorch download on `pip install`, making it unusable as a lightweight local memory solution.
-- **Why it exists:** The code hardcodes `SentenceTransformer("all-MiniLM-L6-v2")` in `jkg/memory.py` instead of allowing API-based embeddings.
+- **Why it exists:** The code hardcodes `SentenceTransformer("all-MiniLM-L6-v2")` in `clark/memory.py` instead of allowing API-based embeddings.
 - **Why fix it:** Local memory for agents should be fast to deploy and not consume massive VRAM/disk space if the user prefers API embeddings.
 - **Expected Behavior:** System should dynamically support lightweight external APIs (like Gemini embeddings with 768 dimensions) or fallback to local models only if explicitly requested.
 

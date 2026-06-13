@@ -1,7 +1,7 @@
-name: jkg
+name: clark
 type: memory_provider
-description: Jessica Knowledge Graph memory provider backed by the JKG HTTP API.
-entrypoint: jkg
+description: Clark memory provider backed by the Clark HTTP API.
+entrypoint: clark
 hooks:
   - initialize
   - system_prompt_block
@@ -12,5 +12,5 @@ hooks:
   - shutdown
 config:
   required_env:
-    - JKG_API_URL
-    - JKG_AUTH_TOKEN
+    - CLARK_API_URL
+    - CLARK_AUTH_TOKEN

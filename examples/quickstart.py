@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-JKG 7.0 Quickstart — запусти и проверь память за 30 секунд.
+Clark 7.0 Quickstart — запусти и проверь память за 30 секунд.
 Требуется: pip install -e .
 """
 import os
-from jkg import HybridMemory
+from clark import HybridMemory
 
 # 1. Инициализация
 hm = HybridMemory()
@@ -40,4 +40,4 @@ print("\n💬 ASK: Расскажи про компанию Алисы и её �
 result = hm.ask("Расскажи про компанию Алисы и её конкурентов")
 print(f"  {result['answer']}")
 
-print("\n✅ JKG 7.0 работает!")
+print("\n✅ Clark 7.0 работает!")

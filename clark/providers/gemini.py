@@ -30,10 +30,10 @@ class GeminiEmbeddingProvider:
     def from_env(cls, dimension: int = 768) -> "GeminiEmbeddingProvider":
         return cls(
             api_key=os.environ.get("GEMINI_API_KEY", ""),
-            model=os.environ.get("JKG_EMBEDDING_MODEL", "gemini-embedding-001"),
+            model=os.environ.get("CLARK_EMBEDDING_MODEL", "gemini-embedding-001"),
             dimension=dimension,
-            timeout=int(os.environ.get("JKG_GEMINI_TIMEOUT_SECONDS", "30")),
-            max_retries=int(os.environ.get("JKG_GEMINI_MAX_RETRIES", "5")),
+            timeout=int(os.environ.get("CLARK_GEMINI_TIMEOUT_SECONDS", "30")),
+            max_retries=int(os.environ.get("CLARK_GEMINI_MAX_RETRIES", "5")),
         )
 
     def embed_text(self, text: str) -> list[float]:

@@ -1,4 +1,4 @@
-"""Provider protocols used by JKG core services."""
+"""Provider protocols used by Clark core services."""
 
 from __future__ import annotations
 

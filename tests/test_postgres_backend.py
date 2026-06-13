@@ -7,19 +7,19 @@ pytestmark = pytest.mark.postgres
 
 
 def test_postgres_migrate_remember_and_query_round_trip():
-    if not os.environ.get("JKG_DATABASE_URL"):
-        pytest.skip("JKG_DATABASE_URL is required for Postgres integration test")
+    if not os.environ.get("CLARK_DATABASE_URL"):
+        pytest.skip("CLARK_DATABASE_URL is required for Postgres integration test")
     if not os.environ.get("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY is required for Postgres vector integration test")
 
-    from jkg.db import PostgresMemory, migrate_postgres
+    from clark.db import PostgresMemory, migrate_postgres
 
     migration = migrate_postgres()
     memory = PostgresMemory.from_env()
-    text = "JKG Postgres integration test remembers CLARK retrieval architecture."
+    text = "Clark Postgres integration test remembers CLARK retrieval architecture."
 
     stored = memory.remember(text, source="pytest", metadata={"test": "postgres"})
-    result = memory.query("What architecture does the JKG Postgres test remember?", limit=3)
+    result = memory.query("What architecture does the Clark Postgres test remember?", limit=3)
 
     assert migration["status"] == "ok"
     assert migration["pgvector_version"]
@@ -31,12 +31,12 @@ def test_postgres_migrate_remember_and_query_round_trip():
 
 
 def test_postgres_remember_many_batches_embeddings():
-    if not os.environ.get("JKG_DATABASE_URL"):
-        pytest.skip("JKG_DATABASE_URL is required for Postgres integration test")
+    if not os.environ.get("CLARK_DATABASE_URL"):
+        pytest.skip("CLARK_DATABASE_URL is required for Postgres integration test")
     if not os.environ.get("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY is required for Postgres vector integration test")
 
-    from jkg.db import PostgresMemory, migrate_postgres
+    from clark.db import PostgresMemory, migrate_postgres
 
     migrate_postgres()
     memory = PostgresMemory.from_env()

@@ -16,19 +16,19 @@ def test_mcp_json_templates_parse() -> None:
         ROOT / "integrations/gemini-cli/settings.json",
     ]:
         data = json.loads(path.read_text())
-        assert "jkg" in data["mcpServers"]
-        assert data["mcpServers"]["jkg"]["command"] == "uv"
+        assert "clark" in data["mcpServers"]
+        assert data["mcpServers"]["clark"]["command"] == "uv"
 
 
 def test_codex_toml_template_parses() -> None:
     data = tomllib.loads((ROOT / "integrations/codex/config.toml").read_text())
-    assert data["mcp_servers"]["jkg"]["command"] == "uv"
-    assert data["mcp_servers"]["jkg"]["enabled"] is True
+    assert data["mcp_servers"]["clark"]["command"] == "uv"
+    assert data["mcp_servers"]["clark"]["enabled"] is True
 
 
 def test_hermes_plugin_compiles() -> None:
     py_compile.compile(
-        str(ROOT / "integrations/hermes/jkg/__init__.py"),
+        str(ROOT / "integrations/hermes/clark/__init__.py"),
         doraise=True,
     )
 
@@ -49,6 +49,6 @@ def test_provider_comparison_runner_compiles() -> None:
 
 def test_mcp_http_app_compiles() -> None:
     py_compile.compile(
-        str(ROOT / "jkg/mcp_http.py"),
+        str(ROOT / "clark/mcp_http.py"),
         doraise=True,
     )

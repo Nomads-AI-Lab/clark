@@ -1,5 +1,5 @@
 """
-JKG 7.0 — Unified Memory Fabric.
+Clark 7.0 — Unified Memory Fabric.
 Four-layer AI memory: Profile + Factual + Episodic + Procedural.
 Single SQLite database. CLARK retrieval (Value Iteration + A*).
 Dynamic session-start context injection. Sync bridges.
@@ -13,4 +13,4 @@ def __getattr__(name):
     if name == "HybridMemory":
         from .memory import HybridMemory
         return HybridMemory
-    raise AttributeError(f"module 'jkg' has no attribute {name!r}")
+    raise AttributeError(f"module 'clark' has no attribute {name!r}")

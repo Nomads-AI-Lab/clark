@@ -1,16 +1,16 @@
 {
   "mcpServers": {
-    "jkg": {
+    "clark": {
       "command": "uv",
       "args": [
         "run",
         "--directory",
-        "/absolute/path/to/jessica-knowledge-graph",
-        "jkg",
+        "/absolute/path/to/clark",
+        "clark",
         "mcp"
       ],
       "env": {
-        "JKG_DATABASE_URL": "postgresql://jkg:strong-password@127.0.0.1:5432/jkg",
+        "CLARK_DATABASE_URL": "postgresql://clark:strong-password@127.0.0.1:5432/clark",
         "GEMINI_API_KEY": "${env:GEMINI_API_KEY}",
         "DEEPSEEK_API_KEY": "${env:DEEPSEEK_API_KEY}"
       }

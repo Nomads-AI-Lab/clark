@@ -12,4 +12,4 @@ venv/
 .venv/
 .pytest_cache/
 coverage.xml
-jkg_test_results.md
+clark_test_results.md

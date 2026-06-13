@@ -21,11 +21,11 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        token = os.environ.get("JKG_MCP_AUTH_TOKEN") or os.environ.get("JKG_AUTH_TOKEN")
+        token = os.environ.get("CLARK_MCP_AUTH_TOKEN") or os.environ.get("CLARK_AUTH_TOKEN")
         if not token:
-            if os.environ.get("JKG_ENV") == "production":
+            if os.environ.get("CLARK_ENV") == "production":
                 return JSONResponse(
-                    {"detail": "JKG_MCP_AUTH_TOKEN or JKG_AUTH_TOKEN is required in production"},
+                    {"detail": "CLARK_MCP_AUTH_TOKEN or CLARK_AUTH_TOKEN is required in production"},
                     status_code=503,
                 )
             return await call_next(request)

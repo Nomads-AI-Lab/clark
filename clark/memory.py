@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JKG 5.1 — HYBRID Memory: Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving.
+Clark 5.1 — HYBRID Memory: Graph + Embeddings + Temporal + Emotional + Forgetting + Self-Evolving.
 ONE SQLite database. Zero conflicts. No external APIs except LLM extraction.
 """
 import os, sys, json, sqlite3, re, hashlib, math, time, heapq
@@ -12,20 +12,20 @@ from collections import defaultdict, deque
 # ═══════════════════════════════════════════════════
 
 DB_PATH = os.path.expanduser(os.environ.get(
-    "JKG_DB_PATH",
-    os.path.join("~", ".jkg", "memory_v3.db")
+    "CLARK_DB_PATH",
+    os.path.join("~", ".clark", "memory_v3.db")
 ))
 # Default: local SentenceTransformer (384-dim). Set GEMINI_API_KEY for Gemini (768-dim).
 _USE_GEMINI = bool(os.environ.get("GEMINI_API_KEY", ""))
 EMBEDDING_DIM = 768 if _USE_GEMINI else 384
 EMBEDDING_MODEL = os.environ.get(
-    "JKG_EMBEDDING_MODEL",
+    "CLARK_EMBEDDING_MODEL",
     "gemini-embedding-2" if _USE_GEMINI else "all-MiniLM-L6-v2"
 )
 
 def _load_env():
-    """Load an explicit env file when JKG_ENV_PATH is set."""
-    env_path = os.environ.get("JKG_ENV_PATH", "")
+    """Load an explicit env file when CLARK_ENV_PATH is set."""
+    env_path = os.environ.get("CLARK_ENV_PATH", "")
     if env_path and os.path.exists(env_path):
         with open(env_path) as f:
             for line in f:
@@ -36,163 +36,9 @@ def _load_env():
 _load_env()
 
 def _llm(prompt: str, system: str = "You are a precise knowledge extraction engine.") -> str:
-    from jkg.providers import DeepSeekLLMProvider
+    from clark.providers import DeepSeekLLMProvider
 
     return DeepSeekLLMProvider.from_env().complete(prompt=prompt, system=system)
-
-
-def _title_case_name(text: str) -> str:
-    return " ".join(part.capitalize() for part in re.split(r"\s+", text.strip()) if part)
-
-
-def _fallback_profile_payload(text: str) -> dict:
-    raw = text.strip()
-    norm = raw.lower()
-    facts = []
-
-    role_match = re.search(r"\b(?:user|i)\s+is\s+(?:an?\s+)?(.+)$", norm)
-    if role_match:
-        role = role_match.group(1).strip(" .")
-        if role:
-            facts.append({
-                "key": "role",
-                "value": role,
-                "category": "identity",
-                "confidence": 0.7,
-            })
-
-    name_match = re.search(r"\bmy name is\s+([a-zA-Z][a-zA-Z\s'-]+)$", raw, re.IGNORECASE)
-    if name_match:
-        facts.append({
-            "key": "name",
-            "value": _title_case_name(name_match.group(1).strip(" .")),
-            "category": "identity",
-            "confidence": 0.8,
-        })
-
-    return {"facts": facts}
-
-
-def _fallback_extract_temporal_payload(text: str) -> dict:
-    raw = text.strip()
-    facts = []
-    ref_years = re.findall(r"\b(19\d{2}|20\d{2})\b", raw)
-    reference_time = f"{ref_years[0]}-01-01" if ref_years else None
-
-    def add_fact(subject: str, predicate: str, obj: str, valid_from: str = None, valid_until: str = None):
-        facts.append({
-            "subject": subject,
-            "predicate": predicate,
-            "object": obj,
-            "valid_from": valid_from,
-            "valid_until": valid_until,
-        })
-
-    lived_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+lived in\s+(.+?)\s+in\s+(\d{4})[\.!]?$", raw)
-    if lived_match:
-        subject, obj, year = lived_match.groups()
-        # Residence statements are open-ended until a later move/relocation invalidates them.
-        add_fact(subject, "lived_in", obj.strip(), f"{year}-01-01", None)
-
-    moved_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+moved to\s+(.+?)\s+in\s+(\d{4})[\.!]?$", raw)
-    if moved_match:
-        subject, obj, year = moved_match.groups()
-        add_fact(subject, "lives_in", obj.strip(), f"{year}-01-01", None)
-
-    return {"reference_time": reference_time, "facts": facts}
-
-
-def _fallback_extract_entities_payload(text: str) -> dict:
-    raw = text.strip()
-    entities = []
-    entity_seen = set()
-    facts = []
-    relations = []
-
-    def add_entity(name: str, etype: str = "entity"):
-        clean = name.strip(" .")
-        if not clean:
-            return
-        key = clean.lower()
-        if key not in entity_seen:
-            entities.append({"name": clean, "type": etype})
-            entity_seen.add(key)
-
-    def add_fact(subject: str, predicate: str, obj: str, subj_type: str = "entity", obj_type: str = None):
-        subject = subject.strip(" .")
-        obj = obj.strip(" .")
-        if not subject or not obj:
-            return
-        add_entity(subject, subj_type)
-        if obj_type:
-            add_entity(obj, obj_type)
-        facts.append({"subject": subject, "predicate": predicate, "object": obj})
-
-    def add_relation(subject: str, predicate: str, obj: str, subj_type: str = "entity", obj_type: str = "entity"):
-        subject = subject.strip(" .")
-        obj = obj.strip(" .")
-        if not subject or not obj:
-            return
-        add_entity(subject, subj_type)
-        add_entity(obj, obj_type)
-        relations.append({"subject": subject, "predicate": predicate, "object": obj})
-
-    favorite_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)'s favorite color is\s+(.+?)[\.!]?$", raw)
-    if favorite_match:
-        subject, obj = favorite_match.groups()
-        add_fact(subject, "favorite", obj, obj_type="concept")
-
-    least_favorite_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)'s least favorite color is\s+(.+?)[\.!]?$", raw)
-    if least_favorite_match:
-        subject, obj = least_favorite_match.groups()
-        add_fact(subject, "least_favorite", obj, obj_type="concept")
-
-    love_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+(?:absolutely\s+)?loves\s+(.+?)[\.!]?$", raw)
-    if love_match:
-        subject, obj = love_match.groups()
-        add_fact(subject, "loves", obj, obj_type="concept")
-
-    hate_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+hates\s+(.+?)[\.!]?$", raw)
-    if hate_match:
-        subject, obj = hate_match.groups()
-        add_fact(subject, "hates", obj, obj_type="concept")
-
-    lived_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+lived in\s+(.+?)(?:\s+in\s+\d{4})?[\.!]?$", raw)
-    if lived_match:
-        subject, obj = lived_match.groups()
-        add_fact(subject, "lived_in", obj, obj_type="location")
-
-    moved_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+moved to\s+(.+?)(?:\s+in\s+\d{4})?[\.!]?$", raw)
-    if moved_match:
-        subject, obj = moved_match.groups()
-        add_fact(subject, "lives_in", obj, obj_type="location")
-
-    built_match = re.search(r"^([Tt]he\s+.+?)\s+built\s+(?:a\s+new\s+)?(.+?)[\.!]?$", raw)
-    if built_match:
-        subject, obj = built_match.groups()
-        add_fact(subject, "builds", obj, obj_type="technology")
-
-    works_with_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+works with\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)[\.!]?$", raw)
-    if works_with_match:
-        subject, obj = works_with_match.groups()
-        add_relation(subject, "works_with", obj, obj_type="person")
-
-    coffee_match = re.search(r"^(I)\s+drank\s+(.+?)[\.!]?$", raw, re.IGNORECASE)
-    if coffee_match:
-        subject, obj = coffee_match.groups()
-        add_fact(subject, "drank", obj, subj_type="person", obj_type="concept")
-
-    is_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+is\s+(?:an?\s+)?(.+?)[\.!]?$", raw)
-    if is_match:
-        subject, obj = is_match.groups()
-        add_fact(subject, "is", obj, obj_type="concept")
-
-    founded_by_match = re.search(r"^([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)\s+is\s+.+?founded by\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)[\.!]?$", raw)
-    if founded_by_match:
-        subject, obj = founded_by_match.groups()
-        add_relation(subject, "founded_by", obj)
-
-    return {"entities": entities, "facts": facts, "relations": relations}
 
 
 # ═══════════════════════════════════════════════════
@@ -200,7 +46,7 @@ def _fallback_extract_entities_payload(text: str) -> dict:
 # ═══════════════════════════════════════════════════
 
 class HybridMemory:
-    """JKG 3.0: graph + embeddings in ONE SQLite database. Zero conflicts."""
+    """Clark 3.0: graph + embeddings in ONE SQLite database. Zero conflicts."""
 
     def __init__(self, db_path=DB_PATH, embedding_model=EMBEDDING_MODEL):
         # Handle special SQLite paths like ":memory:"
@@ -245,7 +91,7 @@ class HybridMemory:
             return self._embedder.encode(texts, normalize_embeddings=True, **kwargs)
         
         # Gemini API path
-        from jkg.providers import GeminiEmbeddingProvider
+        from clark.providers import GeminiEmbeddingProvider
 
         provider = GeminiEmbeddingProvider.from_env(dimension=EMBEDDING_DIM)
         
@@ -357,7 +203,7 @@ class HybridMemory:
                 object_text TEXT
             );
 
-            -- JKG 7.0: UNIFIED MEMORY FABRIC — multi-layer memory
+            -- Clark 7.0: UNIFIED MEMORY FABRIC — multi-layer memory
             -- PROFILE Layer: user identity, preferences, environment facts
             CREATE TABLE IF NOT EXISTS memory_profile (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -616,7 +462,7 @@ class HybridMemory:
         ).fetchone()
 
     # ═══════════════════════════════════════════════
-    # JKG 4.0: TEMPORAL EXTRACTION
+    # Clark 4.0: TEMPORAL EXTRACTION
     # ═══════════════════════════════════════════════
 
     def _extract_temporal(self, text: str) -> dict:
@@ -657,11 +503,13 @@ JSON:"""
         try:
             result = _llm(prompt, "Extract temporal info. Output JSON only.")
             return json.loads(result)
-        except Exception:
-            return _fallback_extract_temporal_payload(text)
+        except Exception as exc:
+            raise RuntimeError(
+                "Temporal extraction failed. Configure DEEPSEEK_API_KEY and retry; Clark does not use regex fallback extraction."
+            ) from exc
 
     # ═══════════════════════════════════════════════
-    # JKG 4.0: FACT DEDUP + INVALIDATION
+    # Clark 4.0: FACT DEDUP + INVALIDATION
     # ═══════════════════════════════════════════════
 
     def _compute_fact_hash(self, subject: str, predicate: str, obj: str) -> str:
@@ -686,7 +534,7 @@ JSON:"""
         return len(conflict_ids)
 
     # ═══════════════════════════════════════════════
-    # JKG 5.1: TEMPORAL LINKING — connect temporal facts to their targets
+    # Clark 5.1: TEMPORAL LINKING — connect temporal facts to their targets
     # ═══════════════════════════════════════════════
 
     # Predicate groups: when one predicate in a group appears, it should
@@ -814,7 +662,7 @@ JSON:"""
         return data
 
     # ═══════════════════════════════════════════════
-    # JKG 4.0: ENTITY RESOLUTION (embedding + LLM)
+    # Clark 4.0: ENTITY RESOLUTION (embedding + LLM)
     # ═══════════════════════════════════════════════
 
     def resolve_entity(self, name: str, etype: str = "entity") -> str:
@@ -897,7 +745,7 @@ JSON:"""
         return self._ensure_entity(name, etype)
 
     # ═══════════════════════════════════════════════
-    # JKG 5.0: BI-TEMPORAL INVALIDATION (из Zep)
+    # Clark 5.0: BI-TEMPORAL INVALIDATION (из Zep)
     # ═══════════════════════════════════════════════
 
     def _invalidate_with_edge(self, old_fact_id: int, new_fact_id: int, 
@@ -911,7 +759,7 @@ JSON:"""
         return old_fact_id
 
     # ═══════════════════════════════════════════════
-    # JKG 5.0: INTENTIONAL FORGETTING — Memory Utility Score
+    # Clark 5.0: INTENTIONAL FORGETTING — Memory Utility Score
     # ═══════════════════════════════════════════════
 
     def _compute_utility(self, fact_id: int) -> float:
@@ -1010,7 +858,7 @@ JSON:"""
                 "archived": archived, "deleted": deleted, "threshold": threshold}
 
     # ═══════════════════════════════════════════════
-    # JKG 5.0: EMOTIONAL MEMORY
+    # Clark 5.0: EMOTIONAL MEMORY
     # ═══════════════════════════════════════════════
 
     def _detect_emotion(self, text: str) -> tuple:
@@ -1039,7 +887,7 @@ JSON:"""
                  "title": r["title"], "time": r["reference_time"]} for r in rows]
 
     # ═══════════════════════════════════════════════
-    # JKG 5.0: SELF-EVOLVING GRAPH
+    # Clark 5.0: SELF-EVOLVING GRAPH
     # ═══════════════════════════════════════════════
 
     def evolve_schema(self, dry_run: bool = True) -> dict:
@@ -1088,7 +936,7 @@ JSON:"""
                 "details": proposals[:5]}
 
     # ═══════════════════════════════════════════════
-    # JKG 5.0: PRIVACY-FIRST — GDPR deletion + audit
+    # Clark 5.0: PRIVACY-FIRST — GDPR deletion + audit
     # ═══════════════════════════════════════════════
 
     def gdpr_delete(self, entity_name: str, request_id: str = None, 
@@ -1109,13 +957,15 @@ JSON:"""
             for f in fact_ids:
                 try:
                     self.conn.execute("DELETE FROM facts_vec WHERE fact_id=?", (f["id"],))
-                except: pass
+                except sqlite3.OperationalError as exc:
+                    raise RuntimeError("Failed to delete fact vector during verified deletion") from exc
                 
                 # Delete from FTS5
                 try:
                     self.conn.execute("DELETE FROM facts_fts_content WHERE id=?", (f["id"],))
                     self.conn.execute("INSERT INTO facts_fts(facts_fts, rowid, entity_name, predicate, object_text) VALUES('delete', ?, '', '', '')", (f["id"],))
-                except: pass
+                except sqlite3.OperationalError as exc:
+                    raise RuntimeError("Failed to delete fact FTS rows during verified deletion") from exc
 
         # Delete relations
         rel_count = self.conn.execute(
@@ -1161,7 +1011,7 @@ JSON:"""
 
     def remember(self, text: str, source: str = "manual", ground_to: str = None,
                  title: str = "", reference_time: str = None) -> dict:
-        """JKG 5.0: Extract + store with EMOTION, BI-TEMPORAL, SELF-EVOLVING."""
+        """Clark 5.0: Extract + store with EMOTION, BI-TEMPORAL, SELF-EVOLVING."""
         import uuid as _uuid
 
         # ── EPISODE with EMOTION ──
@@ -1192,7 +1042,7 @@ JSON:"""
         new_fact_ids = []
         new_entity_ids = []
 
-        # ── JKG 5.1: TEMPORAL LINKING — connect end_year/resigned_from to works_at ──
+        # ── Clark 5.1: TEMPORAL LINKING — connect end_year/resigned_from to works_at ──
         data = self._link_temporal(data)
 
         with self.conn:
@@ -1314,14 +1164,15 @@ JSON:"""
                             "INSERT OR REPLACE INTO facts_vec(fact_id, embedding) VALUES(?,?)",
                             (fid, vec.tobytes()))
                         stored["vectors"] += 1
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise RuntimeError("Failed to encode and store fact vector") from exc
 
         # Rebuild FTS
         try:
             self.conn.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
             self.conn.commit()
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to rebuild facts FTS index") from exc
 
         return stored
 
@@ -1589,7 +1440,7 @@ JSON:"""
         return result
 
     # ═══════════════════════════════════════════════
-    # JKG 6.0: CLARK — Confidence-Layered Adaptive Retrieval for Knowledge
+    # Clark 6.0: CLARK — Confidence-Layered Adaptive Retrieval for Knowledge
     # Inspired by Clark's Nutcracker spatial memory.
     # Stage 1: Value Iteration → Stage 2: A* search → Stage 3: Confidence update
     # ═══════════════════════════════════════════════
@@ -1971,7 +1822,7 @@ JSON:"""
         return {"new_links": new_links, "threshold": threshold}
 
     # ═══════════════════════════════════════════════
-    # JKG 5.1: PREDICATE ALIASES — semantic equivalents
+    # Clark 5.1: PREDICATE ALIASES — semantic equivalents
     # ═══════════════════════════════════════════════
 
     # When user asks "где работает", also match builds/founded/develops etc.
@@ -2030,7 +1881,7 @@ JSON:"""
     # ═══════════════════════════════════════════════
 
     def ask(self, question: str, owner: str = "алтынай") -> dict:
-        """JKG 6.0: Full CLARK pipeline — A* search + temporal awareness + confidence update."""
+        """Clark 6.0: Full CLARK pipeline — A* search + temporal awareness + confidence update."""
         # Detect if question is about past/present
         timeframe = self._extract_query_timeframe(question)
         past_indicators = ["раньше", "до", "был", "была", "было", "были", "прошлом",
@@ -2087,7 +1938,7 @@ JSON:"""
         # Filter: drop timeframe mismatches and invalid present-tense facts
         candidates = [c for c in candidates if not c.get("_penalty")]
 
-        # JKG 5.1: Predicate expansion — for "где работает" questions,
+        # Clark 5.1: Predicate expansion — for "где работает" questions,
         # boost facts with work-alias predicates (builds, founded, etc.)
         if work_predicates and not is_past:
             for c in candidates:
@@ -2144,7 +1995,7 @@ JSON:"""
                 "temporal_filter": not is_past}
 
     # ═══════════════════════════════════════════════
-    # JKG 4.0: SEARCH EPISODES
+    # Clark 4.0: SEARCH EPISODES
     # ═══════════════════════════════════════════════
 
     def search_episodes(self, query: str, limit: int = 10) -> list:
@@ -2185,11 +2036,13 @@ JSON:"""
         facts = self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
         episodes = 0
         try: episodes = self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to count episodes") from exc
 
         relations = 0
         try: relations = self.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to count relations") from exc
 
         orphans = 0
         try:
@@ -2199,12 +2052,14 @@ JSON:"""
                                    UNION SELECT object_id FROM relations)
                 AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.subject_id = e.id)
             """).fetchone()[0]
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to count orphan entities") from exc
 
         vectors = 0
         if self.has_vec:
             try: vectors = self.conn.execute("SELECT COUNT(*) FROM facts_vec").fetchone()[0]
-            except: pass
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError("Failed to count vectors") from exc
 
         # Detect schema: check if forget_status column exists
         fact_cols = [c[1] for c in self.conn.execute("PRAGMA table_info(facts)").fetchall()]
@@ -2238,11 +2093,13 @@ JSON:"""
             emotional = self.conn.execute(
                 "SELECT COUNT(*) FROM episodes WHERE emotion != 'neutral' AND emotion_intensity > 0.3"
             ).fetchone()[0]
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to count emotional episodes") from exc
 
         schema_proposals = 0
         try: schema_proposals = self.conn.execute("SELECT COUNT(*) FROM schema_evolution").fetchone()[0]
-        except: pass
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("Failed to count schema proposals") from exc
 
         # Average utility
         avg_util = None
@@ -2251,7 +2108,8 @@ JSON:"""
                 avg_util = self.conn.execute(
                     "SELECT AVG(utility_score) FROM facts WHERE forget_status='active'"
                 ).fetchone()[0]
-            except: pass
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError("Failed to compute average utility score") from exc
 
         return {
             "entities": entities, "connected": entities - orphans, "orphans": orphans,
@@ -2284,7 +2142,8 @@ JSON:"""
             for f in fact_ids:
                 try:
                     self.conn.execute("DELETE FROM facts_vec WHERE fact_id=?", (f["id"],))
-                except: pass
+                except sqlite3.OperationalError as exc:
+                    raise RuntimeError("Failed to delete fact vector during forget") from exc
         # Delete graph data
         self.conn.execute("DELETE FROM relations WHERE subject_id=? OR object_id=?", (eid, eid))
         self.conn.execute("DELETE FROM facts WHERE subject_id=?", (eid,))
@@ -2293,7 +2152,7 @@ JSON:"""
         return {"status": "deleted", "entity": name}
 
     # ═══════════════════════════════════════════════════════════════
-    # JKG 7.0: UNIFIED MEMORY FABRIC — Multi-Layer Ingest API
+    # Clark 7.0: UNIFIED MEMORY FABRIC — Multi-Layer Ingest API
     # ═══════════════════════════════════════════════════════════════
 
     # ── PROFILE LAYER ─────────────────────────────────────────────
@@ -2322,8 +2181,10 @@ JSON:"""
         try:
             raw = _llm(prompt, "You extract user profile facts. Output JSON only.")
             data = json.loads(raw.strip().replace("```json","").replace("```",""))
-        except Exception:
-            data = _fallback_profile_payload(text)
+        except Exception as exc:
+            raise RuntimeError(
+                "Profile extraction failed. Configure DEEPSEEK_API_KEY and retry; Clark does not use heuristic profile fallback extraction."
+            ) from exc
 
         stored = []
         for f in data.get("facts", []):
@@ -2488,7 +2349,7 @@ JSON:"""
         return results[:limit]
 
     # ═══════════════════════════════════════════════════════════════
-    # JKG 7.0: UNIFIED QUERY — Multi-layer search with CLARK fusion
+    # Clark 7.0: UNIFIED QUERY — Multi-layer search with CLARK fusion
     # ═══════════════════════════════════════════════════════════════
 
     def query(self, text: str, layers: list = None, limit: int = 10) -> dict:
@@ -2527,7 +2388,7 @@ JSON:"""
                     d["score"] = float(d.get("confidence", 0.5)) * 0.9
                     profile_results.append(d)
 
-            # Embedding fallback: if keyword found nothing, try semantic search
+            # Semantic profile search: if keyword search returns nothing, use explicit embeddings.
             if (
                 not profile_results and self.has_vec and self.embedder
                 and timeframe.get("mode") == "any"
@@ -2552,13 +2413,13 @@ JSON:"""
                             scored.append(d)
                         scored.sort(key=lambda x: x["score"], reverse=True)
                         profile_results = scored[:limit]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise RuntimeError("Profile semantic search failed") from exc
 
             by_layer["profile"] = len(profile_results)
             all_results.extend(profile_results)
 
-        # ── Factual Layer (JKG core — CLARK retrieval) ──
+        # ── Factual Layer (Clark core — CLARK retrieval) ──
         if "factual" in layers:
             try:
                 factual_results = self.retrieve_clark(text, top_k=limit * 3)
@@ -2593,8 +2454,8 @@ JSON:"""
                     filtered_factual.append(r)
                 factual_results = filtered_factual[:limit]
                 if not factual_results and timeframe.get("mode") == "bounded":
-                    fallback_candidates = self.recall(text, limit=limit * 5)
-                    for r in fallback_candidates:
+                    recall_candidates = self.recall(text, limit=limit * 5)
+                    for r in recall_candidates:
                         metadata = self._get_fact_metadata(
                             r.get("entity", ""),
                             r.get("predicate", ""),
@@ -2677,7 +2538,7 @@ JSON:"""
         }
 
     # ═══════════════════════════════════════════════════════════════
-    # JKG 7.0: SESSION START INJECTION ENGINE
+    # Clark 7.0: SESSION START INJECTION ENGINE
     # ═══════════════════════════════════════════════════════════════
 
     def session_start_context(self, owner: str = "алтынай",
@@ -2762,17 +2623,17 @@ JSON:"""
             pass
 
         # Build final injection block
-        header = "DYNAMIC CONTEXT (JKG 7.0 Unified Memory Fabric)"
+        header = "DYNAMIC CONTEXT (Clark 7.0 Unified Memory Fabric)"
         body = "\n\n".join(blocks) if blocks else "(no context loaded)"
 
         return f"══════════════════════════════════════════════\n{header}\n══════════════════════════════════════════════\n{body}"
 
     # ═══════════════════════════════════════════════════════════════
-    # JKG 7.0: SYNC BRIDGES — Auto-ingest from other systems
+    # Clark 7.0: SYNC BRIDGES — Auto-ingest from other systems
     # ═══════════════════════════════════════════════════════════════
 
     def sync_from_memory(self, content: str, target: str = "memory") -> dict:
-        """Bridge from built-in memory tool → JKG 7.0.
+        """Bridge from built-in memory tool → Clark 7.0.
 
         When memory(action='add') is called, this auto-indexes into the right layer.
         target='user' → profile layer, target='memory' → factual layer.
@@ -2784,7 +2645,7 @@ JSON:"""
 
     def sync_from_session(self, session_id: str, transcript: str, source: str = "terminal",
                           summary: str = "") -> dict:
-        """Bridge from session end → JKG 7.0 episodic + factual layers."""
+        """Bridge from session end → Clark 7.0 episodic + factual layers."""
         return self.remember_session(
             session_id=session_id, text=transcript, source=source,
             summary=summary, importance=0.7
@@ -2792,12 +2653,12 @@ JSON:"""
 
     def sync_from_skill(self, name: str, description: str = "",
                         triggers: list = None, category: str = "general") -> dict:
-        """Bridge from skill create/update → JKG 7.0 procedural layer."""
+        """Bridge from skill create/update → Clark 7.0 procedural layer."""
         return self.index_skill(name=name, description=description,
                                 triggers=triggers, category=category)
 
     def migrate_builtin_memory(self, memory_data: str) -> dict:
-        """One-shot: migrate existing flat memory injection into JKG profile layer.
+        """One-shot: migrate existing flat memory injection into Clark profile layer.
 
         Parses the current memory injection format and stores each entry as a profile fact.
         """
@@ -2844,8 +2705,10 @@ Example: "Altynai's Instagram is blocked" → fact: instagram is_blocked, relati
 JSON:"""
     try:
         return _llm(prompt, "You extract knowledge graph triples. Always create relations. Output JSON only.")
-    except Exception:
-        return json.dumps(_fallback_extract_entities_payload(text), ensure_ascii=False)
+    except Exception as exc:
+        raise RuntimeError(
+            "Entity extraction failed. Configure DEEPSEEK_API_KEY and retry; Clark does not use heuristic entity fallback extraction."
+        ) from exc
 
 
 # ═══════════════════════════════════════════════
@@ -2973,7 +2836,7 @@ if __name__ == "__main__":
         result = hm.propagate_confidence(iterations=iterations)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    # ═══ JKG 7.0: Unified Query CLI ═══
+    # ═══ Clark 7.0: Unified Query CLI ═══
 
     elif cmd == "query":
         query = " ".join(sys.argv[2:])

@@ -11,7 +11,7 @@ def test_deepseek_llm_returns_parseable_json_contract():
     if not os.environ.get("DEEPSEEK_API_KEY"):
         pytest.skip("DEEPSEEK_API_KEY is required for DeepSeek provider contract test")
 
-    from jkg.memory import _llm
+    from clark.memory import _llm
 
     raw = _llm(
         'Return exactly this JSON object and nothing else: {"ok": true, "provider": "deepseek"}',
@@ -26,10 +26,10 @@ def test_gemini_embedding_returns_configured_vector_dimension():
     if not os.environ.get("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY is required for Gemini embedding provider contract test")
 
-    from jkg.memory import EMBEDDING_DIM, HybridMemory
+    from clark.memory import EMBEDDING_DIM, HybridMemory
 
     memory = HybridMemory(db_path=":memory:")
-    embedding = memory.encode("JKG provider contract test")
+    embedding = memory.encode("Clark provider contract test")
 
     assert len(embedding) == EMBEDDING_DIM
     assert any(float(value) != 0.0 for value in embedding)
@@ -39,10 +39,10 @@ def test_gemini_batch_embedding_returns_one_vector_per_text():
     if not os.environ.get("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY is required for Gemini batch embedding provider contract test")
 
-    from jkg.providers import GeminiEmbeddingProvider
+    from clark.providers import GeminiEmbeddingProvider
 
     provider = GeminiEmbeddingProvider.from_env(dimension=768)
-    embeddings = provider.embed_batch(["JKG batch embedding A", "JKG batch embedding B"])
+    embeddings = provider.embed_batch(["Clark batch embedding A", "Clark batch embedding B"])
 
     assert len(embeddings) == 2
     assert all(len(embedding) == 768 for embedding in embeddings)

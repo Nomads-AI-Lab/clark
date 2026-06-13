@@ -1,9 +1,9 @@
-[mcp_servers.jkg]
+[mcp_servers.clark]
 command = "uv"
-args = ["run", "--directory", "/absolute/path/to/jessica-knowledge-graph", "jkg", "mcp"]
+args = ["run", "--directory", "/absolute/path/to/clark", "clark", "mcp"]
 enabled = true
 
-[mcp_servers.jkg.env]
-JKG_DATABASE_URL = "postgresql://jkg:strong-password@127.0.0.1:5432/jkg"
+[mcp_servers.clark.env]
+CLARK_DATABASE_URL = "postgresql://clark:strong-password@127.0.0.1:5432/clark"
 GEMINI_API_KEY = "${GEMINI_API_KEY}"
 DEEPSEEK_API_KEY = "${DEEPSEEK_API_KEY}"

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from jkg.server import app
+from clark.server import app
 
 
 def test_healthz_is_public():
@@ -13,8 +13,8 @@ def test_healthz_is_public():
 
 
 def test_stats_requires_bearer_token_when_configured(monkeypatch, tmp_path):
-    monkeypatch.setenv("JKG_AUTH_TOKEN", "test-token")
-    monkeypatch.setenv("JKG_DB_PATH", str(tmp_path / "server.db"))
+    monkeypatch.setenv("CLARK_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("CLARK_DB_PATH", str(tmp_path / "server.db"))
     client = TestClient(app)
 
     missing = client.get("/v1/stats")

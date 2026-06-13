@@ -26,7 +26,7 @@ class DeepSeekLLMProvider:
     def from_env(cls) -> "DeepSeekLLMProvider":
         return cls(
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-            model=os.environ.get("JKG_LLM_MODEL", "deepseek-v4-flash"),
+            model=os.environ.get("CLARK_LLM_MODEL", "deepseek-v4-flash"),
             api_base=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
         )
 

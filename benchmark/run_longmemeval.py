@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run LongMemEval-style retrieval against the real JKG Postgres backend."""
+"""Run LongMemEval-style retrieval against the real Clark Postgres backend."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from jkg.db import PostgresMemory, migrate_postgres
+from clark.db import PostgresMemory, migrate_postgres
 
 
 TOP_K_VALUES = [1, 3, 5, 10, 20]
@@ -20,7 +20,7 @@ TOP_K_VALUES = [1, 3, 5, 10, 20]
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run a real LongMemEval-style retrieval benchmark against JKG Postgres/pgvector."
+        description="Run a real LongMemEval-style retrieval benchmark against Clark Postgres/pgvector."
     )
     parser.add_argument(
         "--dataset",
@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument("--cleanup", action="store_true", help="Delete this benchmark tenant after the run.")
     args = parser.parse_args()
 
-    require_env("JKG_DATABASE_URL")
+    require_env("CLARK_DATABASE_URL")
     require_env("GEMINI_API_KEY")
     if not args.dataset:
         raise SystemExit("LONGMEMEVAL_PATH or --dataset is required")
@@ -124,7 +124,7 @@ def run_benchmark(
 ) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "benchmark": "LongMemEval-style retrieval",
-        "system": "JKG Postgres pgvector",
+        "system": "Clark Postgres pgvector",
         "total": 0,
         "skipped_abstention": 0,
         "skipped_invalid": 0,
@@ -219,7 +219,7 @@ def run_benchmark(
             hits = metrics["recall_at_k"]["recall@5"]
             print(f"[{index}/{len(records)}] recall@5={hits / max(1, total):.3f}")
 
-        if os.environ.get("JKG_BENCHMARK_CLEANUP_EACH_QUESTION") == "1":
+        if os.environ.get("CLARK_BENCHMARK_CLEANUP_EACH_QUESTION") == "1":
             cleanup_tenant(memory)
 
         if sleep_seconds > 0:
@@ -283,7 +283,7 @@ def metrics_from_checkpoint(path: Path) -> dict[str, Any]:
 def empty_metrics() -> dict[str, Any]:
     return {
         "benchmark": "LongMemEval-style retrieval",
-        "system": "JKG Postgres pgvector",
+        "system": "Clark Postgres pgvector",
         "total": 0,
         "skipped_abstention": 0,
         "skipped_invalid": 0,
@@ -356,24 +356,24 @@ def render_session_text(session: Any) -> str:
 
 def default_output_path() -> Path:
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    return Path("benchmark/results") / f"longmemeval_jkg_{stamp}.json"
+    return Path("benchmark/results") / f"longmemeval_clark_{stamp}.json"
 
 
 def cleanup_tenant(memory: PostgresMemory) -> None:
     with memory._connect() as conn:
-        conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id = %s", (memory.tenant_id,))
+        conn.execute("DELETE FROM clark_memory_items WHERE tenant_id = %s", (memory.tenant_id,))
         conn.commit()
 
 
 def cleanup_run_tenants(memory: PostgresMemory, run_tenant_id: str) -> None:
     with memory._connect() as conn:
-        conn.execute("DELETE FROM jkg_memory_items WHERE tenant_id LIKE %s", (f"{run_tenant_id}-%",))
+        conn.execute("DELETE FROM clark_memory_items WHERE tenant_id LIKE %s", (f"{run_tenant_id}-%",))
         conn.commit()
 
 
 def print_report(results: dict[str, Any]) -> None:
     total = results["total"]
-    print("\nJKG LongMemEval-style retrieval results")
+    print("\nClark LongMemEval-style retrieval results")
     print(f"Questions scored: {total}")
     print(f"Skipped abstention: {results['skipped_abstention']}")
     print(f"Skipped invalid: {results['skipped_invalid']}")

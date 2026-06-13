@@ -948,7 +948,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jkg"
+name = "clark"
 version = "7.0.0"
 source = { editable = "." }
 dependencies = [

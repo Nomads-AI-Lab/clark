@@ -1,4 +1,4 @@
-"""HTTP API for JKG server deployments."""
+"""HTTP API for Clark server deployments."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .doctor import collect_diagnostics
 from .memory import HybridMemory
 
 
-app = FastAPI(title="Jessica Knowledge Graph", version="7.0.0")
+app = FastAPI(title="Clark", version="7.0.0")
 
 
 class MemoryRequest(BaseModel):
@@ -28,10 +28,10 @@ class QueryRequest(BaseModel):
 
 
 def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
-    token = os.environ.get("JKG_AUTH_TOKEN")
+    token = os.environ.get("CLARK_AUTH_TOKEN")
     if not token:
-        if os.environ.get("JKG_ENV") == "production":
-            raise HTTPException(status_code=503, detail="JKG_AUTH_TOKEN is required in production")
+        if os.environ.get("CLARK_ENV") == "production":
+            raise HTTPException(status_code=503, detail="CLARK_AUTH_TOKEN is required in production")
         return
 
     expected = f"Bearer {token}"
@@ -40,7 +40,7 @@ def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
 
 
 def get_memory() -> Any:
-    if os.environ.get("JKG_DATABASE_URL"):
+    if os.environ.get("CLARK_DATABASE_URL"):
         return PostgresMemory.from_env()
     return HybridMemory()
 
